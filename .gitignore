@@ -1,0 +1,6 @@
+node_modules/
+data/
+.env
+web/dist/
+server/scratch_check.mjs
+data_backup*

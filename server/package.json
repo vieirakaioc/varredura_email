@@ -1,0 +1,27 @@
+{
+  "name": "validador-fiscal-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../.env src/index.js",
+    "start": "node --env-file-if-exists=../.env src/index.js",
+    "seed": "node --env-file-if-exists=../.env src/db/seed.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "fast-xml-parser": "^5.11.1",
+    "fflate": "^0.8.3",
+    "imapflow": "^2.0.5",
+    "mssql": "^12.7.2",
+    "multer": "^2.4.0",
+    "node-forge": "^1.4.0",
+    "oracledb": "^7.0.1",
+    "pdfjs-dist": "^6.3.289",
+    "zod": "^4.6.5"
+  }
+}
