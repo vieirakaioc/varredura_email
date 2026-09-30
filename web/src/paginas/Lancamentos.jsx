@@ -51,6 +51,7 @@ const COLUNAS_NOTAS = [
   { titulo: 'Origem', valor: (l) => (l.com_xml ? 'XML recebido' : 'Digitada') },
   { titulo: 'Dias até lançar', tipo: 'numero', valor: (l) => l.dias_ate_lancar },
 ];
+const CHAVE_RECOLHIDOS = 'lancamentos_blocos_recolhidos';
 const ROTULO_FILTRO = { equipe: 'Bloco', dia: 'Dia', hora: 'Hora', usuario: 'Pessoa', empresa: 'Empresa', origem: 'Origem' };
 
 /** Cor da célula do mapa de calor conforme a intensidade. */
@@ -91,6 +92,16 @@ export default function Lancamentos() {
   const [horaDestaque, setHoraDestaque] = useState(null);
   const [mostrar, setMostrar] = useState(300);
   const [editandoMetas, setEditandoMetas] = useState(false);
+  // Blocos do ranking recolhidos (lembrado neste navegador); "Outros" começa fechado por ser a lista maior
+  const [recolhidos, setRecolhidos] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(CHAVE_RECOLHIDOS)) ?? ['outros']); } catch { return new Set(['outros']); }
+  });
+  const alternarBloco = (chave) => setRecolhidos((atual) => {
+    const novo = new Set(atual);
+    if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+    try { localStorage.setItem(CHAVE_RECOLHIDOS, JSON.stringify([...novo])); } catch { /* sem storage */ }
+    return novo;
+  });
   const k = dados?.indicadores;
   const fiscais = (dados?.pessoas ?? []).filter((p) => p.equipe === 'fiscal');
   const maxCalor = Math.max(1, ...(dados?.mapa_calor ?? []).flatMap((p) => p.horas));
@@ -272,17 +283,31 @@ export default function Lancamentos() {
                 const lista = dados.pessoas.filter((p) => p.equipe === eq.chave);
                 if (!lista.length) return null;
                 const comMeta = eq.chave === 'fiscal';
+                const aberto = !recolhidos.has(eq.chave);
+                const filtrado = f.equipe === eq.chave;
                 return (
                   <div key={eq.chave}>
-                    <div className="linha entre" style={{ padding: '10px 12px', background: 'var(--superficie-2)', borderBottom: '1px solid var(--borda)', cursor: 'pointer', opacity: f.equipe && f.equipe !== eq.chave ? 0.5 : 1 }}
-                      title="Clique para filtrar a tela por este bloco" onClick={() => alternar('equipe', eq.chave)}>
-                      <strong>{eq.rotulo}</strong>
-                      <span className="pequeno muted">
-                        {numero(eq.pessoas)} pessoa(s) · {numero(eq.notas)} nota(s) · média {numero(eq.media_pessoa_dia ?? 0, 1)}/pessoa/dia
-                        {comMeta && eq.meta_ate_hoje ? <> · meta até hoje <strong>{numero(eq.meta_ate_hoje)}</strong> ({numero(Math.round((eq.notas / eq.meta_ate_hoje) * 100))}%)</> : ''}
+                    <div className="linha entre" role="button" tabIndex={0} aria-expanded={aberto}
+                      style={{ padding: '10px 12px', background: 'var(--superficie-2)', borderBottom: '1px solid var(--borda)', cursor: 'pointer', gap: 10, opacity: f.equipe && !filtrado ? 0.5 : 1 }}
+                      title={aberto ? 'Clique para ocultar este bloco' : 'Clique para mostrar este bloco'}
+                      onClick={() => alternarBloco(eq.chave)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alternarBloco(eq.chave); } }}>
+                      <strong className="linha" style={{ gap: 6 }}>
+                        <span aria-hidden style={{ display: 'inline-block', width: 12, transition: 'transform .15s', transform: aberto ? 'rotate(90deg)' : 'none' }}>▸</span>
+                        {eq.rotulo}
+                      </strong>
+                      <span className="linha pequeno muted" style={{ gap: 10 }}>
+                        <span>
+                          {numero(eq.pessoas)} pessoa(s) · {numero(eq.notas)} nota(s) · média {numero(eq.media_pessoa_dia ?? 0, 1)}/pessoa/dia
+                          {comMeta && eq.meta_ate_hoje ? <> · meta até hoje <strong>{numero(eq.meta_ate_hoje)}</strong> ({numero(Math.round((eq.notas / eq.meta_ate_hoje) * 100))}%)</> : ''}
+                        </span>
+                        <button className="btn pequeno ghost" onClick={(e) => { e.stopPropagation(); alternar('equipe', eq.chave); }}
+                          title={filtrado ? 'Tirar o filtro deste bloco' : 'Filtrar a tela inteira por este bloco'}>
+                          {filtrado ? 'Tirar filtro' : 'Filtrar'}
+                        </button>
                       </span>
                     </div>
-                    <div className="tabela-wrap">
+                    {aberto && <div className="tabela-wrap">
                       <table className="tabela">
                         <thead><tr><th>Pessoa</th><th className="num">Notas</th><th className="num">Hoje</th><th className="num">Média/dia</th>{comMeta && <><th className="num">Meta/dia</th><th className="num">Meta até hoje</th><th className="num">% meta</th></>}<th>Jornada</th><th className="num">Do XML</th><th className="num">Prazo</th><th className="num">Valor</th></tr></thead>
                         <tbody>
@@ -308,7 +333,7 @@ export default function Lancamentos() {
                           ))}
                         </tbody>
                       </table>
-                    </div>
+                    </div>}
                   </div>
                 );
               })}
