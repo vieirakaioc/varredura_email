@@ -279,7 +279,7 @@ export async function painelPendentes(filtros = {}) {
     serie,
     por_empresa: agrupar(pendentes, chaveEmpresa, (i) => `${i.empresa}${i.uf ? ` (${i.uf})` : ''}`).slice(0, 12),
     por_especie: agrupar(pendentes, (i) => i.especie_rotulo, (i) => i.especie_rotulo),
-    por_fornecedor: agrupar(pendentes, (i) => i.cnpj_fornecedor, (i) => i.fornecedor ?? i.cnpj_fornecedor).slice(0, 10),
+    por_fornecedor: agrupar(pendentes, (i) => i.cnpj_fornecedor, (i) => i.fornecedor ?? i.cnpj_fornecedor).slice(0, 50),
     aging: FAIXAS.map((f) => ({
       ...f,
       qtd: pendentes.filter((i) => (i.dias_parada ?? 0) >= f.de && (i.dias_parada ?? 0) <= f.ate).length,

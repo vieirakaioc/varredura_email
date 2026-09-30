@@ -279,8 +279,10 @@ function PainelPendentes() {
                 </div>
               </Cartao>
 
-              <Cartao titulo="Fornecedores com mais pendências" semPadding>
-                <div className="tabela-wrap" style={{ maxHeight: 260 }}>
+              <Cartao className="preenche" titulo="Fornecedores com mais pendências" sub={`${dados.por_fornecedor.length} · clique para filtrar`} semPadding>
+                {/* ocupa a altura da linha (definida pelos cartões ao lado) e rola por dentro */}
+                <div style={{ position: 'relative', flex: 1, minHeight: 260 }}>
+                <div className="tabela-wrap" style={{ position: 'absolute', inset: 0, maxHeight: 'none' }}>
                   <table className="tabela">
                     <thead><tr><th>Fornecedor</th><th className="num">Notas</th><th className="num">Valor</th></tr></thead>
                     <tbody>
@@ -293,6 +295,7 @@ function PainelPendentes() {
                       ))}
                     </tbody>
                   </table>
+                </div>
                 </div>
               </Cartao>
             </div>
