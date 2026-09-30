@@ -51,6 +51,31 @@ const COLUNAS_NOTAS = [
   { titulo: 'Origem', valor: (l) => (l.com_xml ? 'XML recebido' : 'Digitada') },
   { titulo: 'Dias até lançar', tipo: 'numero', valor: (l) => l.dias_ate_lancar },
 ];
+/** Valor em reais abreviado para tabelas (o valor completo vai no title). */
+const brlCompacto = (v) => {
+  if (v == null) return '—';
+  const a = Math.abs(v);
+  if (a >= 1e6) return `R$ ${(v / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
+  if (a >= 1e4) return `R$ ${Math.round(v / 1e3).toLocaleString('pt-BR')} mil`;
+  return brl(v);
+};
+/** "seg, ter, qua, qui" → "seg–qui" (dias seguidos); senão a lista curta. */
+const faixaDias = (texto) => {
+  const d = String(texto ?? '').split(', ').filter(Boolean);
+  return d.length > 2 ? `${d[0]}–${d[d.length - 1]}` : d.join('·');
+};
+const corMeta = (pct) => (pct >= 100 ? 'var(--status-bom)' : pct >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)');
+
+/** Barra de progresso da meta: trilho + % (verde ≥ 100%, amarelo ≥ 80%, vermelho abaixo). */
+function BarraMeta({ pct, titulo }) {
+  return (
+    <span className="meta-barra" title={titulo ?? `${pct}% da meta até hoje`}>
+      <span className="trilho"><i style={{ width: `${Math.min(100, pct)}%`, background: corMeta(pct) }} /></span>
+      <span className="pct" style={{ color: pct >= 100 ? 'var(--ok)' : pct >= 80 ? 'var(--pend)' : 'var(--erro)' }}>{pct}%</span>
+    </span>
+  );
+}
+
 const CHAVE_RECOLHIDOS = 'lancamentos_blocos_recolhidos';
 const ROTULO_FILTRO = { equipe: 'Bloco', dia: 'Dia', hora: 'Hora', usuario: 'Pessoa', empresa: 'Empresa', origem: 'Origem' };
 
@@ -165,7 +190,7 @@ export default function Lancamentos() {
       <Erro erro={erro} />
       {carregando && !dados ? <Carregando /> : k && (
         <>
-          <div className="grade grade-kpi monetario">
+          <div className="grade grade-kpi monetario quatro">
             <Kpi rotulo="Notas lançadas" valor={numero(k.notas)} detalhe={brl(k.valor)} cor="var(--serie-1)" />
             <Kpi rotulo="Hoje" valor={numero(k.hoje)} detalhe={`${numero(k.pessoas_hoje)} pessoa(s) lançando`} cor="var(--status-bom)" />
             <Kpi rotulo="Média por dia" valor={numero(k.media_dia, 1)} detalhe={k.melhor_dia ? `melhor dia: ${data(k.melhor_dia.dia)} (${numero(k.melhor_dia.notas)})` : ''} />
@@ -212,7 +237,8 @@ export default function Lancamentos() {
                       <Cell key={d.dia} fill={d.meta != null && d.notas >= d.meta ? 'var(--status-bom)' : 'var(--serie-1)'}
                         fillOpacity={!f.dia || f.dia === d.dia ? 1 : 0.3} />
                     ))}
-                    <LabelList dataKey="notas" position="top" style={rotulo} formatter={(v) => (v ? numero(v) : '')} />
+                    {/* com muitos dias os números se sobrepõem: aí o valor fica só no tooltip */}
+                    {dados.por_dia.length <= 16 && <LabelList dataKey="notas" position="top" style={rotulo} formatter={(v) => (v ? numero(v) : '')} />}
                   </Bar>
                   <Line isAnimationActive={false} type="stepAfter" dataKey="meta" name="Meta" stroke="var(--status-critico)" strokeDasharray="5 4" strokeWidth={2} dot={false} />
                 </ComposedChart>
@@ -239,6 +265,137 @@ export default function Lancamentos() {
                 </BarChart>
               </ResponsiveContainer>
             </Cartao>
+          </div>
+
+          <Cartao titulo="Ranking da equipe" sub="clique numa pessoa para filtrar" semPadding
+            acoes={<div className="linha" style={{ gap: 6 }}>
+              {podeMeta && <button className="btn pequeno ghost" onClick={() => setEditandoMetas((x) => !x)}>{editandoMetas ? 'Fechar metas' : 'Editar metas'}</button>}
+              <BotaoExportar titulo="Lançamentos por pessoa" linhas={dados.pessoas} colunas={COLUNAS_PESSOAS} />
+            </div>}>
+            {editandoMetas && <EditorMetas metas={dados.metas} pessoas={dados.pessoas} aoSalvar={atualizar} />}
+            {dados.por_equipe.map((eq) => {
+              const lista = dados.pessoas.filter((p) => p.equipe === eq.chave);
+              if (!lista.length) return null;
+              const comMeta = eq.chave === 'fiscal';
+              const aberto = !recolhidos.has(eq.chave);
+              const filtrado = f.equipe === eq.chave;
+              const pctBloco = comMeta && eq.meta_ate_hoje ? Math.round((eq.notas / eq.meta_ate_hoje) * 100) : null;
+              return (
+                <div key={eq.chave} style={{ opacity: f.equipe && !filtrado ? 0.55 : 1 }}>
+                  <div className="bloco-topo" role="button" tabIndex={0} aria-expanded={aberto}
+                    title={aberto ? 'Clique para ocultar este bloco' : 'Clique para mostrar este bloco'}
+                    onClick={() => alternarBloco(eq.chave)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alternarBloco(eq.chave); } }}>
+                    <span className="titulo"><span className="seta" aria-hidden>▸</span>{eq.rotulo}</span>
+                    <span className="resumo">
+                      <span><strong>{numero(eq.pessoas)}</strong> pessoa(s)</span>
+                      <span><strong>{numero(eq.notas)}</strong> nota(s)</span>
+                      <span><strong>{numero(eq.media_pessoa_dia ?? 0, 1)}</strong> por pessoa/dia</span>
+                      {pctBloco != null && <BarraMeta pct={pctBloco} titulo={`${numero(eq.notas)} de ${numero(eq.meta_ate_hoje)} (meta até hoje)`} />}
+                      <button className="btn pequeno ghost" onClick={(e) => { e.stopPropagation(); alternar('equipe', eq.chave); }}
+                        title={filtrado ? 'Tirar o filtro deste bloco' : 'Filtrar a tela inteira por este bloco'}>
+                        {filtrado ? 'Tirar filtro' : 'Filtrar'}
+                      </button>
+                    </span>
+                  </div>
+                  {aberto && <div className="tabela-wrap">
+                    <table className="tabela">
+                      <thead>
+                        <tr>
+                          <th className="pos">#</th><th>Pessoa</th>{!comMeta && <th className="num">Dias</th>}<th className="num">Notas</th><th className="num">Hoje</th><th className="num">Média/dia</th>
+                          {comMeta && <><th className="num">Meta/dia</th><th className="num" title="meta acumulada até hoje (soma da meta de cada dia útil)">Meta acum.</th><th>Atingido</th><th className="num" title="dias em que bateu a meta diária">Na meta</th></>}
+                          <th title="primeiro e último lançamento do dia, em média">Horário</th><th className="num col-opcional" title="% lançadas a partir do XML recebido">XML</th><th className="num col-opcional" title="dias entre a chegada do XML e o lançamento">Prazo</th><th className="num">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lista.map((p, i) => (
+                          <tr key={p.usuario} className={`clicavel ${f.usuario === p.usuario ? 'selecionada' : ''}`} onClick={() => alternar('usuario', p.usuario)}>
+                            <td className="pos">{i + 1}</td>
+                            <td className="nowrap" style={{ fontWeight: 550 }} title={`${p.empresas} empresa(s) atendida(s)`}>{p.usuario}</td>
+                            {!comMeta && <td className="num">{p.dias_ativos}</td>}
+                            <td className="num"><strong>{numero(p.notas)}</strong></td>
+                            <td className="num">{p.hoje ? numero(p.hoje) : <span className="muted">—</span>}</td>
+                            <td className="num">{numero(p.media_dia, 1)}</td>
+                            {comMeta && <>
+                              <td className="num nowrap" title={p.meta_manual ? 'Meta fixa (manual)' : p.jornada ? `${Math.floor(p.jornada.minutos_dia / 60)}h${String(p.jornada.minutos_dia % 60).padStart(2, '0')} por dia · ${p.jornada.dias}` : ''}>
+                                {p.jornada?.propria && <span className="tag" style={{ marginRight: 6 }}>{faixaDias(p.jornada.dias)}</span>}
+                                {p.meta_dia != null ? numero(p.meta_dia) : '—'}{p.meta_manual ? ' ✎' : ''}
+                              </td>
+                              <td className="num" title={`meta do período inteiro: ${numero(p.meta_periodo ?? 0)}`}>{p.meta_ate_hoje != null ? numero(p.meta_ate_hoje) : '—'}</td>
+                              <td>{p.pct_meta != null ? <BarraMeta pct={p.pct_meta} /> : <span className="muted">—</span>}</td>
+                              <td className="num">{p.dias_na_meta != null ? <>{p.dias_na_meta}<span className="muted">/{p.dias_ativos}</span></> : '—'}</td>
+                            </>}
+                            <td className="nowrap muted">{p.primeira_hora}–{p.ultima_hora}</td>
+                            <td className="num col-opcional">{numero(p.pct_com_xml)}%</td>
+                            <td className="num col-opcional">{p.prazo_medio != null ? `${numero(p.prazo_medio, 1)}d` : '—'}</td>
+                            <td className="num" title={brl(p.valor)}>{brlCompacto(p.valor)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>}
+                </div>
+              );
+            })}
+          </Cartao>
+
+          <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
+            <Cartao titulo="Escrita Fiscal: média por dia × meta" sub={`meta ${numero(dados.metas.padrao)}/dia por pessoa`}>
+              <ResponsiveContainer width="100%" height={Math.max(180, fiscais.length * 34 + 40)}>
+                <BarChart data={fiscais} layout="vertical" margin={{ left: 8, right: 40, top: 4 }} barGap={2}>
+                  <CartesianGrid horizontal={false} stroke="var(--grade)" />
+                  <XAxis type="number" allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="usuario" tick={eixo} axisLine={false} tickLine={false} width={150} />
+                  <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
+                    <div className="tooltip-grafico">
+                      <div className="t">{payload[0].payload.usuario}</div>
+                      <div>Média: <strong>{numero(payload[0].payload.media_dia, 1)}</strong> nota(s)/dia</div>
+                      <div>Meta: <strong>{payload[0].payload.meta_dia != null ? numero(payload[0].payload.meta_dia, 1) : '—'}</strong>{payload[0].payload.pct_meta != null ? ` · ${numero(payload[0].payload.pct_meta)}%` : ''}</div>
+                      {payload[0].payload.dias_na_meta != null && <div className="muted pequeno">bateu a meta em {payload[0].payload.dias_na_meta} de {payload[0].payload.dias_ativos} dia(s)</div>}
+                      <div className="muted pequeno">Clique para filtrar</div>
+                    </div>
+                  ) : null)} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar isAnimationActive={false} dataKey="media_dia" name="Média por dia" fill="var(--status-bom)" radius={[0, 4, 4, 0]} maxBarSize={14}
+                    style={{ cursor: 'pointer' }} onClick={(e) => alternar('usuario', (e.payload ?? e).usuario)}>
+                    {fiscais.map((p) => (
+                      <Cell key={p.usuario} fill={p.meta_dia == null ? 'var(--serie-1)' : p.media_dia >= p.meta_dia ? 'var(--status-bom)' : p.pct_meta >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)'}
+                        fillOpacity={!f.usuario || f.usuario === p.usuario ? 1 : 0.35} />
+                    ))}
+                    <LabelList dataKey="media_dia" position="right" style={rotulo} formatter={(v) => numero(v, 1)} />
+                  </Bar>
+                  <Bar isAnimationActive={false} dataKey="meta_dia" name="Meta" fill="var(--texto-3)" fillOpacity={0.35} radius={[0, 4, 4, 0]} maxBarSize={14} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Cartao>
+
+            <div className="coluna">
+              <Cartao titulo="Por empresa" sub="notas lançadas" semPadding>
+                <div style={{ padding: 12 }}>
+                  {dados.por_empresa.map((x) => {
+                    const max = Math.max(...dados.por_empresa.map((y) => y.notas), 1);
+                    return (
+                      <div key={x.chave} style={{ marginBottom: 8, cursor: 'pointer', opacity: f.empresa && f.empresa !== x.chave ? 0.45 : 1 }}
+                        title={f.empresa === x.chave ? 'Clique para ver todas as empresas' : `Filtrar por ${x.rotulo}`}
+                        onClick={() => setFiltro('empresa', f.empresa === x.chave ? '' : x.chave)}>
+                        <div className="linha entre pequeno"><span className="truncar"><code className="muted">{x.chave}</code> {x.rotulo}</span><strong>{numero(x.notas)}</strong></div>
+                        <div className="barra-progresso"><div style={{ width: `${(x.notas / max) * 100}%`, background: f.empresa === x.chave ? 'var(--status-bom)' : 'var(--serie-1)' }} /></div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Cartao>
+              <Cartao titulo="Origem do lançamento">
+                {dados.por_origem.map((o) => (
+                  <div key={o.chave} className="linha entre" style={{ padding: '6px 0', cursor: 'pointer', opacity: f.origem && f.origem !== o.chave ? 0.45 : 1 }}
+                    title="Clique para filtrar" onClick={() => alternar('origem', o.chave)}>
+                    <span className={`badge ${o.chave === 'xml' ? 'sev-ok' : 'sev-alerta'}`}>{o.rotulo}</span>
+                    <strong>{numero(o.notas)}</strong>
+                  </div>
+                ))}
+                <p className="muted pequeno" style={{ marginBottom: 0 }}>“Digitada” = não há XML correspondente no recebimento do Senior (nota digitada manualmente ou XML não importado).</p>
+              </Cartao>
+            </div>
           </div>
 
           <Cartao titulo="Quem lança em cada hora" sub="10 pessoas com mais lançamentos · clique numa célula para filtrar pessoa e hora">
@@ -272,131 +429,6 @@ export default function Lancamentos() {
             </div>
           </Cartao>
 
-          <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
-            <Cartao titulo="Ranking da equipe" sub="clique numa pessoa para filtrar" semPadding
-              acoes={<div className="linha" style={{ gap: 6 }}>
-                {podeMeta && <button className="btn pequeno ghost" onClick={() => setEditandoMetas((x) => !x)}>{editandoMetas ? 'Fechar metas' : 'Editar metas'}</button>}
-                <BotaoExportar titulo="Lançamentos por pessoa" linhas={dados.pessoas} colunas={COLUNAS_PESSOAS} />
-              </div>}>
-              {editandoMetas && <EditorMetas metas={dados.metas} pessoas={dados.pessoas} aoSalvar={atualizar} />}
-              {dados.por_equipe.map((eq) => {
-                const lista = dados.pessoas.filter((p) => p.equipe === eq.chave);
-                if (!lista.length) return null;
-                const comMeta = eq.chave === 'fiscal';
-                const aberto = !recolhidos.has(eq.chave);
-                const filtrado = f.equipe === eq.chave;
-                return (
-                  <div key={eq.chave}>
-                    <div className="linha entre" role="button" tabIndex={0} aria-expanded={aberto}
-                      style={{ padding: '10px 12px', background: 'var(--superficie-2)', borderBottom: '1px solid var(--borda)', cursor: 'pointer', gap: 10, opacity: f.equipe && !filtrado ? 0.5 : 1 }}
-                      title={aberto ? 'Clique para ocultar este bloco' : 'Clique para mostrar este bloco'}
-                      onClick={() => alternarBloco(eq.chave)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alternarBloco(eq.chave); } }}>
-                      <strong className="linha" style={{ gap: 6 }}>
-                        <span aria-hidden style={{ display: 'inline-block', width: 12, transition: 'transform .15s', transform: aberto ? 'rotate(90deg)' : 'none' }}>▸</span>
-                        {eq.rotulo}
-                      </strong>
-                      <span className="linha pequeno muted" style={{ gap: 10 }}>
-                        <span>
-                          {numero(eq.pessoas)} pessoa(s) · {numero(eq.notas)} nota(s) · média {numero(eq.media_pessoa_dia ?? 0, 1)}/pessoa/dia
-                          {comMeta && eq.meta_ate_hoje ? <> · meta até hoje <strong>{numero(eq.meta_ate_hoje)}</strong> ({numero(Math.round((eq.notas / eq.meta_ate_hoje) * 100))}%)</> : ''}
-                        </span>
-                        <button className="btn pequeno ghost" onClick={(e) => { e.stopPropagation(); alternar('equipe', eq.chave); }}
-                          title={filtrado ? 'Tirar o filtro deste bloco' : 'Filtrar a tela inteira por este bloco'}>
-                          {filtrado ? 'Tirar filtro' : 'Filtrar'}
-                        </button>
-                      </span>
-                    </div>
-                    {aberto && <div className="tabela-wrap">
-                      <table className="tabela">
-                        <thead><tr><th>Pessoa</th><th className="num">Notas</th><th className="num">Hoje</th><th className="num">Média/dia</th>{comMeta && <><th className="num">Meta/dia</th><th className="num">Meta até hoje</th><th className="num">% meta</th></>}<th>Jornada</th><th className="num">Do XML</th><th className="num">Prazo</th><th className="num">Valor</th></tr></thead>
-                        <tbody>
-                          {lista.map((p, i) => (
-                            <tr key={p.usuario} className="clicavel" style={{ background: f.usuario === p.usuario ? 'var(--superficie-3)' : undefined }} onClick={() => alternar('usuario', p.usuario)}>
-                              <td><strong>{i + 1}º</strong> {p.usuario}<div className="muted pequeno">{p.dias_ativos} dia(s) · {p.empresas} empresa(s)</div></td>
-                              <td className="num"><strong>{numero(p.notas)}</strong></td>
-                              <td className="num">{p.hoje ? numero(p.hoje) : <span className="muted">—</span>}</td>
-                              <td className="num">{numero(p.media_dia, 1)}</td>
-                              {comMeta && <>
-                                <td className="num" title={p.meta_manual ? 'Meta fixa (manual)' : p.jornada ? `${Math.floor(p.jornada.minutos_dia / 60)}h${String(p.jornada.minutos_dia % 60).padStart(2, '0')} por dia · ${p.jornada.dias}` : ''}>
-                                  {p.meta_dia != null ? numero(p.meta_dia) : '—'}{p.meta_manual ? ' ✎' : ''}
-                                  {p.jornada?.propria && <div className="muted pequeno">{p.jornada.dias}</div>}</td>
-                                <td className="num">{p.meta_ate_hoje != null ? numero(p.meta_ate_hoje) : '—'}<div className="muted pequeno">período {numero(p.meta_periodo ?? 0)}</div></td>
-                                <td className="num">{p.pct_meta != null ? <span className={`badge ${p.pct_meta >= 100 ? 'sev-ok' : p.pct_meta >= 80 ? 'sev-alerta' : 'sev-erro'}`}>{numero(p.pct_meta)}%</span> : '—'}
-                                  {p.dias_na_meta != null && <div className="muted pequeno" title="dias em que bateu a meta diária">{p.dias_na_meta}/{p.dias_ativos} dia(s)</div>}</td>
-                              </>}
-                              <td className="pequeno nowrap">{p.primeira_hora} – {p.ultima_hora}</td>
-                              <td className="num">{numero(p.pct_com_xml)}%</td>
-                              <td className="num">{p.prazo_medio != null ? `${numero(p.prazo_medio, 1)}d` : '—'}</td>
-                              <td className="num">{brl(p.valor)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>}
-                  </div>
-                );
-              })}
-            </Cartao>
-
-            <div className="coluna">
-              <Cartao titulo="Por empresa" sub="notas lançadas" semPadding>
-                <div style={{ padding: 12 }}>
-                  {dados.por_empresa.map((x) => {
-                    const max = Math.max(...dados.por_empresa.map((y) => y.notas), 1);
-                    return (
-                      <div key={x.chave} style={{ marginBottom: 8, cursor: 'pointer', opacity: f.empresa && f.empresa !== x.chave ? 0.45 : 1 }}
-                        title={f.empresa === x.chave ? 'Clique para ver todas as empresas' : `Filtrar por ${x.rotulo}`}
-                        onClick={() => setFiltro('empresa', f.empresa === x.chave ? '' : x.chave)}>
-                        <div className="linha entre pequeno"><span className="truncar"><code className="muted">{x.chave}</code> {x.rotulo}</span><strong>{numero(x.notas)}</strong></div>
-                        <div className="barra-progresso"><div style={{ width: `${(x.notas / max) * 100}%`, background: f.empresa === x.chave ? 'var(--status-bom)' : 'var(--serie-1)' }} /></div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Cartao>
-              <Cartao titulo="Origem do lançamento">
-                {dados.por_origem.map((o) => (
-                  <div key={o.chave} className="linha entre" style={{ padding: '6px 0', cursor: 'pointer', opacity: f.origem && f.origem !== o.chave ? 0.45 : 1 }}
-                    title="Clique para filtrar" onClick={() => alternar('origem', o.chave)}>
-                    <span className={`badge ${o.chave === 'xml' ? 'sev-ok' : 'sev-alerta'}`}>{o.rotulo}</span>
-                    <strong>{numero(o.notas)}</strong>
-                  </div>
-                ))}
-                <p className="muted pequeno" style={{ marginBottom: 0 }}>“Digitada” = não há XML correspondente no recebimento do Senior (nota digitada manualmente ou XML não importado).</p>
-              </Cartao>
-            </div>
-          </div>
-
-          <Cartao titulo="Escrita Fiscal: média por dia × meta" sub={`por pessoa do time · meta ${numero(dados.metas.padrao)}/dia = ${dados.metas.calculo}`}>
-            <ResponsiveContainer width="100%" height={Math.max(180, fiscais.length * 34 + 40)}>
-              <BarChart data={fiscais} layout="vertical" margin={{ left: 8, right: 40, top: 4 }} barGap={2}>
-                <CartesianGrid horizontal={false} stroke="var(--grade)" />
-                <XAxis type="number" allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="usuario" tick={eixo} axisLine={false} tickLine={false} width={150} />
-                <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
-                  <div className="tooltip-grafico">
-                    <div className="t">{payload[0].payload.usuario}</div>
-                    <div>Média: <strong>{numero(payload[0].payload.media_dia, 1)}</strong> nota(s)/dia</div>
-                    <div>Meta: <strong>{payload[0].payload.meta_dia != null ? numero(payload[0].payload.meta_dia, 1) : '—'}</strong>{payload[0].payload.pct_meta != null ? ` · ${numero(payload[0].payload.pct_meta)}%` : ''}</div>
-                    {payload[0].payload.dias_na_meta != null && <div className="muted pequeno">bateu a meta em {payload[0].payload.dias_na_meta} de {payload[0].payload.dias_ativos} dia(s)</div>}
-                    <div className="muted pequeno">Clique para filtrar</div>
-                  </div>
-                ) : null)} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar isAnimationActive={false} dataKey="media_dia" name="Média por dia" fill="var(--status-bom)" radius={[0, 4, 4, 0]} maxBarSize={14}
-                  style={{ cursor: 'pointer' }} onClick={(e) => alternar('usuario', (e.payload ?? e).usuario)}>
-                  {fiscais.map((p) => (
-                    <Cell key={p.usuario} fill={p.meta_dia == null ? 'var(--serie-1)' : p.media_dia >= p.meta_dia ? 'var(--status-bom)' : p.pct_meta >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)'}
-                      fillOpacity={!f.usuario || f.usuario === p.usuario ? 1 : 0.35} />
-                  ))}
-                  <LabelList dataKey="media_dia" position="right" style={rotulo} formatter={(v) => numero(v, 1)} />
-                </Bar>
-                <Bar isAnimationActive={false} dataKey="meta_dia" name="Meta" fill="var(--texto-3)" fillOpacity={0.35} radius={[0, 4, 4, 0]} maxBarSize={14} />
-              </BarChart>
-            </ResponsiveContainer>
-          </Cartao>
-
           <HistoricoMensal />
 
           <Cartao titulo="Notas lançadas" sub="segue os filtros acima · clique na pessoa ou na empresa para filtrar" semPadding
@@ -407,20 +439,22 @@ export default function Lancamentos() {
             {!dados.itens.length ? <div className="vazio" style={{ padding: 30 }}>Nenhuma nota com estes filtros.</div> : (
               <div className="tabela-wrap" style={{ maxHeight: 520 }}>
                 <table className="tabela">
-                  <thead><tr><th>Lançada em</th><th>Hora</th><th>Pessoa</th><th>Empresa</th><th>Nota</th><th>Fornecedor</th><th>Entrada</th><th className="num">Valor</th><th>Situação</th><th>Origem</th></tr></thead>
+                  <thead><tr><th>Lançada em</th><th>Hora</th><th>Pessoa</th><th>Empresa</th><th>Nota</th><th>Fornecedor</th><th title="data de entrada · dias entre o XML e o lançamento">Entrada</th><th className="num">Valor</th><th>Situação</th><th>Origem</th></tr></thead>
                   <tbody>
                     {dados.itens.slice(0, mostrar).map((l) => (
                       <tr key={`${l.codemp}|${l.codfil}|${l.numero}|${l.serie}|${l.fornecedor}|${l.geracao}|${l.horario}`}>
-                        <td className="nowrap clicavel" style={{ cursor: 'pointer' }} onClick={() => alternar('dia', dados.base === 'entrada' ? l.entrada : l.geracao)}>{data(l.geracao)}</td>
+                        <td className="nowrap muted" style={{ cursor: 'pointer' }} onClick={() => alternar('dia', dados.base === 'entrada' ? l.entrada : l.geracao)}>{data(l.geracao)}</td>
                         <td className="nowrap clicavel" style={{ cursor: 'pointer' }} onClick={() => l.hora != null && alternar('hora', l.hora)}><strong>{l.horario ?? '—'}</strong></td>
-                        <td className="clicavel pequeno" style={{ cursor: 'pointer' }} onClick={() => alternar('usuario', l.usuario)}>{l.usuario}</td>
-                        <td className="clicavel pequeno" style={{ cursor: 'pointer' }} onClick={() => alternar('empresa', `${l.codemp}/${l.codfil}`)}><code className="muted">{l.codemp}/{l.codfil}</code> {l.empresa}</td>
+                        <td className="nowrap" style={{ cursor: 'pointer' }} onClick={() => alternar('usuario', l.usuario)}>{l.usuario}</td>
+                        <td className="nowrap" style={{ cursor: 'pointer' }} onClick={() => alternar('empresa', `${l.codemp}/${l.codfil}`)}><code className="muted">{l.codemp}/{l.codfil}</code> {l.empresa}</td>
                         <td className="nowrap"><strong>{l.numero}</strong>{l.serie ? <span className="muted">-{l.serie}</span> : null}</td>
-                        <td className="pequeno" style={{ maxWidth: 240 }}>{l.fornecedor ?? '—'}</td>
-                        <td className="nowrap pequeno">{data(l.entrada)}{l.dias_ate_lancar != null && <div className="muted">{l.dias_ate_lancar === 0 ? 'mesmo dia' : `${l.dias_ate_lancar}d após o XML`}</div>}</td>
+                        <td style={{ maxWidth: 260 }}><span className="truncar" style={{ display: 'block' }} title={l.fornecedor ?? ''}>{l.fornecedor ?? '—'}</span></td>
+                        <td className="nowrap" title={l.dias_ate_lancar == null ? '' : l.dias_ate_lancar === 0 ? 'lançada no mesmo dia do XML' : `lançada ${l.dias_ate_lancar} dia(s) após o XML`}>
+                          {data(l.entrada)}{l.dias_ate_lancar != null && <span className="muted"> · {l.dias_ate_lancar === 0 ? 'mesmo dia' : `${l.dias_ate_lancar}d`}</span>}
+                        </td>
                         <td className="num">{brl(l.valor)}</td>
-                        <td className="pequeno"><span className={`badge ${l.situacao === '2' ? 'sev-ok' : l.situacao === '3' ? 'sev-erro' : 'sev-alerta'}`}>{l.situacao_rotulo}</span></td>
-                        <td className="pequeno">{l.com_xml ? 'XML' : <span className="muted">Digitada</span>}</td>
+                        <td><span className={`badge ${l.situacao === '2' ? 'sev-ok' : l.situacao === '3' ? 'sev-erro' : 'sev-alerta'}`}>{l.situacao_rotulo}</span></td>
+                        <td>{l.com_xml ? 'XML' : <span className="muted">Digitada</span>}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
 import { Topo } from '../contexto.jsx';
-import { brl, Cartao, Campo, cnpj, data, Erro, PagamentoSenior, SeniorBadge, Status, STATUS, Tabela, TIPOS_DOC, useDados, NotaArquivo, BoletoInfo, OrdemCompra, BotaoExportar, textoOrdemCompra } from '../ui.jsx';
+import { brl, Cartao, Campo, cnpj, data, Erro, PagamentoSenior, SeniorBadge, Status, STATUS, Tabela, TIPOS_DOC, useDados, NotaArquivo, BoletoInfo, OrdemCompra, BotaoExportar, textoOrdemCompra, dataCurta } from '../ui.jsx';
 
 const CAMPOS_FILTRO = ['q', 'empresa_id', 'cnpj', 'fornecedor', 'de', 'ate', 'campo_data', 'numero', 'chave', 'cfop', 'status', 'tipo',
   'responsavel_id', 'caixa_id', 'recebido_de', 'recebido_ate'];
@@ -73,14 +73,19 @@ export default function Documentos() {
   // CFOP só existe em NF-e/CT-e: some da tabela quando a página não tem nenhum
   const temCfop = dados?.itens.some((l) => l.cfops);
   const colunas = [
-    { campo: 'status', titulo: 'Status', render: (l) => <Status s={l.status} />, ordenavel: true },
+    { campo: 'status', titulo: 'Status', classe: 'nowrap', render: (l) => <Status s={l.status} curto />, ordenavel: true },
     { campo: 'tipo', titulo: 'Tipo', render: (l) => <span className="tag">{TIPOS_DOC[l.tipo] ?? l.tipo}</span> },
-    { campo: 'numero', titulo: 'Número', render: (l) => <strong>{l.numero ?? '—'}{l.serie ? <span className="muted">/{l.serie}</span> : ''}</strong>, ordenavel: true },
-    { campo: 'fornecedor', titulo: 'Fornecedor', ordenavel: true, render: (l) => <div><div>{l.emitente_nome ?? '—'}</div><div className="muted pequeno">{cnpj(l.emitente_cnpj)} · {l.emitente_uf ?? '—'}</div></div> },
-    { campo: 'empresa_nome', titulo: 'Empresa', render: (l) => l.empresa_nome ?? <span className="badge sev-erro">Não identificada</span> },
+    { campo: 'numero', titulo: 'Número', classe: 'nowrap', render: (l) => <strong>{l.numero ?? '—'}{l.serie ? <span className="muted">/{l.serie}</span> : ''}</strong>, ordenavel: true },
+    { campo: 'fornecedor', titulo: 'Fornecedor', ordenavel: true, render: (l) => (
+      <div style={{ maxWidth: 230 }}>
+        <div className="truncar" title={l.emitente_nome ?? ''}>{l.emitente_nome ?? '—'}</div>
+        <div className="muted pequeno nowrap">{cnpj(l.emitente_cnpj)} · {l.emitente_uf ?? '—'}</div>
+      </div>
+    ) },
+    { campo: 'empresa_nome', titulo: 'Empresa', render: (l) => (l.empresa_nome ? <div className="truncar" style={{ maxWidth: 150 }} title={l.empresa_nome}>{l.empresa_nome}</div> : <span className="badge sev-erro">Não identificada</span>) },
     temCfop && { campo: 'cfops', titulo: 'CFOP', render: (l) => <span className="mono">{l.cfops ?? '—'}</span> },
-    { campo: 'emissao', titulo: 'Emissão', ordenavel: true, render: (l) => data(l.data_emissao) },
-    { campo: 'recebido', titulo: 'Recebido', ordenavel: true, render: (l) => data(l.recebido_em, true) },
+    { campo: 'emissao', titulo: 'Emissão', classe: 'nowrap', ordenavel: true, render: (l) => <span title={data(l.data_emissao)}>{dataCurta(l.data_emissao)}</span> },
+    { campo: 'recebido', titulo: 'Recebido', classe: 'nowrap', ordenavel: true, render: (l) => <span title={data(l.recebido_em, true)}>{dataCurta(l.recebido_em)} <span className="muted">{String(l.recebido_em ?? '').slice(11, 16)}</span></span> },
     { campo: 'valor', titulo: 'Valor', classe: 'num', ordenavel: true, render: (l) => <div>{brl(l.v_total)}{l.v_liquido != null && Math.abs(l.v_liquido - l.v_total) > 0.009 && <div className="muted pequeno" title="Valor líquido (após retenções)">líq. {brl(l.v_liquido)}</div>}</div> },
     { campo: 'alertas', titulo: 'Ocorrências', render: (l) => <ResumoAlertas l={l} /> },
     { campo: 'senior', titulo: 'Senior', render: (l) => <span className="linha" style={{ gap: 4, flexWrap: 'wrap' }}><SeniorBadge s={l.senior_status} titulo={l.senior_ref} /><PagamentoSenior l={l} /></span> },

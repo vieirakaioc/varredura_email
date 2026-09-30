@@ -275,7 +275,7 @@ function PainelPendentes() {
                 </div>
               </Cartao>
 
-              <Cartao titulo="Por documento" sub="pendentes" semPadding>
+              <Cartao titulo="Por documento" semPadding>
                 <div style={{ padding: 12 }}>
                   {dados.por_especie.map((x) => (
                     <button key={x.chave} className="linha entre" onClick={() => setFiltro('especie', f.especie === x.chave ? '' : x.chave)}
@@ -329,29 +329,38 @@ function PainelPendentes() {
           ) : (
             <div className="tabela-wrap">
               <table className="tabela">
-                <thead><tr><th>Espera</th><th>Documento</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
+                <thead><tr><th>Espera</th><th>Recebida</th><th>Documento</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
                 <tbody>
-                  {itens.slice(0, mostrar).map((l) => (
-                    <tr key={l.chave}>
-                      <td className="nowrap">
-                        <span className={`badge ${l.dias_parada > 10 ? 'sev-erro' : l.dias_parada > 5 ? 'sev-alerta' : 'sev-na'}`}>
-                          {l.dias_parada === 0 ? 'hoje' : `${l.dias_parada} dia${l.dias_parada > 1 ? 's' : ''}`}
-                        </span>
-                        <div className="muted pequeno">recebida {data(l.recebido_em)}</div>
-                      </td>
-                      <td className="nowrap"><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong><div className="muted pequeno">emitida {data(l.emissao)}</div></td>
-                      <td style={{ maxWidth: 230 }}>{l.fornecedor ?? <span className="muted">não cadastrado</span>}<div className="muted pequeno">{fmtCnpj(l.cnpj_fornecedor)}</div></td>
-                      <td className="pequeno">{l.empresa}{l.empresa_do_grupo ? <div className="muted">Emp {l.codemp}/{l.codfil}{l.uf ? ` · ${l.uf}` : ''}</div> : <div className="muted">{fmtCnpj(l.cnpj_destinatario)}</div>}</td>
-                      <td className="num"><strong>{brl(l.valor)}</strong></td>
-                      <td className="nowrap">
-                        {l.situacao === 'processada' ? <><span className="badge sev-ok">Processada</span><div className="muted pequeno">{data(l.entrada.data)} · NF {l.entrada.numero}</div></>
-                          : l.situacao === 'inconsistente' ? <><span className="badge sev-erro">Inconsistente</span><div className="muted pequeno">{l.cancelada ? `cancelada na SEFAZ · ${data(l.cancelada_em)}` : !l.empresa_do_grupo ? 'destinatário fora do grupo' : 'valor zerado'}</div></>
-                            : l.situacao === 'incompleta' ? <><span className="badge sev-alerta">Incompleta</span><div className="muted pequeno">{!l.fornecedor_cadastrado ? 'fornecedor não cadastrado' : 'XML sem itens'}</div></>
-                              : <><span className="badge sev-conferencia">Pendente</span>{l.tipo_movimento === 'saida' ? <div className="muted pequeno">saída do grupo</div> : l.entrada_propria ? <div className="muted pequeno">nota de entrada própria</div> : l.transferencia ? <div className="muted pequeno">transferência do grupo</div> : null}</>}
-                      </td>
-                      <td className="mono pequeno" title={l.chave}>{l.chave?.slice(-12)}</td>
-                    </tr>
-                  ))}
+                  {itens.slice(0, mostrar).map((l) => {
+                    // motivo da situação: vai ao lado do selo, na mesma linha
+                    const motivo = l.situacao === 'processada' ? `${data(l.entrada.data)} · NF ${l.entrada.numero}`
+                      : l.situacao === 'inconsistente' ? (l.cancelada ? `cancelada na SEFAZ · ${data(l.cancelada_em)}` : !l.empresa_do_grupo ? 'destinatário fora do grupo' : 'valor zerado')
+                        : l.situacao === 'incompleta' ? (!l.fornecedor_cadastrado ? 'fornecedor não cadastrado' : 'XML sem itens')
+                          : l.tipo_movimento === 'saida' ? 'saída do grupo' : l.entrada_propria ? 'entrada própria' : l.transferencia ? 'transferência do grupo' : null;
+                    const selo = { processada: 'sev-ok', inconsistente: 'sev-erro', incompleta: 'sev-alerta' }[l.situacao] ?? 'sev-conferencia';
+                    return (
+                      <tr key={l.chave}>
+                        <td className="nowrap">
+                          <span className={`badge ${l.dias_parada > 10 ? 'sev-erro' : l.dias_parada > 5 ? 'sev-alerta' : 'sev-na'}`}>
+                            {l.dias_parada === 0 ? 'hoje' : `${l.dias_parada} dia${l.dias_parada > 1 ? 's' : ''}`}
+                          </span>
+                        </td>
+                        <td className="nowrap muted">{data(l.recebido_em)}</td>
+                        <td className="nowrap" title={`emitida em ${data(l.emissao)}`}><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong></td>
+                        <td style={{ maxWidth: 300 }}>
+                          <div className="truncar" title={l.fornecedor ?? ''}>{l.fornecedor ?? <span className="muted">não cadastrado</span>}</div>
+                          <div className="muted pequeno mono">{fmtCnpj(l.cnpj_fornecedor)}</div>
+                        </td>
+                        <td className="nowrap" title={l.empresa_do_grupo ? `Empresa/filial ${l.codemp}/${l.codfil}` : `Fora do grupo · ${fmtCnpj(l.cnpj_destinatario)}`}>
+                          {l.empresa_do_grupo ? <code className="muted">{l.codemp}/{l.codfil}</code> : null} {l.empresa}
+                          {l.uf ? <span className="muted"> · {l.uf}</span> : null}
+                        </td>
+                        <td className="num">{brl(l.valor)}</td>
+                        <td className="nowrap"><span className={`badge ${selo}`}>{l.situacao_rotulo}</span>{motivo && <span className="muted pequeno" style={{ marginLeft: 6 }}>{motivo}</span>}</td>
+                        <td className="mono muted nowrap" title={l.chave}>{l.chave?.slice(-12)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               {itens.length > mostrar && <div className="paginacao"><span>Exibindo {numero(mostrar)} de {numero(itens.length)}</span><button className="btn pequeno" onClick={() => setMostrar((m) => m + 1000)}>Mostrar mais</button></div>}

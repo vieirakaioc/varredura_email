@@ -14,6 +14,13 @@ export function data(v, comHora = false) {
   if (!di) return v;
   return `${di}/${m}/${a}${comHora && h ? ` ${h.slice(0, 5)}` : ''}`;
 }
+/** Data curta para tabelas: "23/09" no ano corrente, "23/09/25" nos outros (a data completa vai no title). */
+export function dataCurta(v) {
+  if (!v) return '—';
+  const [a, m, d] = String(v).slice(0, 10).split('-');
+  if (!d) return v;
+  return a === String(new Date().getFullYear()) ? `${d}/${m}` : `${d}/${m}/${a.slice(2)}`;
+}
 export function cnpj(v) {
   const c = String(v || '').replace(/[^0-9A-Z]/gi, '');
   if (c.length === 14) return `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}`;
@@ -24,18 +31,18 @@ export const chaveFmt = (c) => (c && /^\d{44}$/.test(c) ? c.match(/.{1,4}/g).joi
 
 // ------------------------------------------------------------------ status
 export const STATUS = {
-  APROVADA: { rotulo: 'Aprovada', icone: '✓' },
-  PENDENTE: { rotulo: 'Pendente de validação', icone: '●' },
-  INCONSISTENTE: { rotulo: 'Com inconsistência', icone: '!' },
-  DUPLICADA: { rotulo: 'Duplicada', icone: '⧉' },
-  AGUARDANDO_XML: { rotulo: 'Aguardando XML', icone: '⋯' },
-  REJEITADA: { rotulo: 'Rejeitada', icone: '✕' },
-  CORRECAO_SOLICITADA: { rotulo: 'Correção solicitada', icone: '↺' },
-  NAO_FISCAL: { rotulo: 'Não fiscal', icone: '–' },
+  APROVADA: { rotulo: 'Aprovada', curto: 'Aprovada', icone: '✓' },
+  PENDENTE: { rotulo: 'Pendente de validação', curto: 'Pendente', icone: '●' },
+  INCONSISTENTE: { rotulo: 'Com inconsistência', curto: 'Inconsistente', icone: '!' },
+  DUPLICADA: { rotulo: 'Duplicada', curto: 'Duplicada', icone: '⧉' },
+  AGUARDANDO_XML: { rotulo: 'Aguardando XML', curto: 'Sem XML', icone: '⋯' },
+  REJEITADA: { rotulo: 'Rejeitada', curto: 'Rejeitada', icone: '✕' },
+  CORRECAO_SOLICITADA: { rotulo: 'Correção solicitada', curto: 'Correção', icone: '↺' },
+  NAO_FISCAL: { rotulo: 'Não fiscal', curto: 'Não fiscal', icone: '–' },
 };
 export function Status({ s, curto }) {
   const info = STATUS[s] ?? { rotulo: s, icone: '•' };
-  return <span className={`badge st-${s}`} title={info.rotulo}><span aria-hidden>{info.icone}</span>{curto ? info.rotulo.split(' ')[0] : info.rotulo}</span>;
+  return <span className={`badge st-${s}`} title={info.rotulo}><span aria-hidden>{info.icone}</span>{curto ? info.curto ?? info.rotulo : info.rotulo}</span>;
 }
 const SEV = { erro: 'Erro', alerta: 'Alerta', conferencia: 'Conferência', ok: 'OK', nao_aplicavel: 'N/A', falha: 'Falha' };
 export function Severidade({ s }) {
@@ -56,9 +63,9 @@ export function NotaArquivo({ l }) {
 export function BoletoInfo({ l, vencimento = l.boleto_vencimento, valor = l.boleto_valor }) {
   if (!l.boleto_anexo_id && !(l.qtd_boletos > 0)) return <span className="muted pequeno" title="Nenhum boleto veio no e-mail">sem boleto</span>;
   return (
-    <div className="linha" style={{ gap: 6 }} onClick={(e) => e.stopPropagation()}>
-      <div className="pequeno" style={{ lineHeight: 1.3 }}>
-        <div>{vencimento ? `venc. ${data(vencimento)}` : 'sem vencimento'}</div>
+    <div className="linha" style={{ gap: 6, flexWrap: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+      <div className="pequeno nowrap" style={{ lineHeight: 1.3 }}>
+        <div title={vencimento ? `vencimento ${data(vencimento)}` : ''}>{vencimento ? `venc. ${dataCurta(vencimento)}` : 'sem vencimento'}</div>
         {valor != null && <div className="muted">{brl(valor)}</div>}
       </div>
       {l.boleto_anexo_id

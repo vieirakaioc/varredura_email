@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { Topo, useAuth } from '../contexto.jsx';
-import { brl, Cartao, cnpj, data, Erro, Kpi, Modal, numero, TIPOS_DOC, useDados, useToast, NotaArquivo, BoletoInfo, OrdemCompra, BotaoExportar, textoOrdemCompra } from '../ui.jsx';
+import { brl, Cartao, cnpj, data, Erro, Kpi, Modal, numero, TIPOS_DOC, useDados, useToast, NotaArquivo, BoletoInfo, OrdemCompra, BotaoExportar, textoOrdemCompra, dataCurta } from '../ui.jsx';
 
 // Motivos de "não lançar": um clique, sem digitar justificativa.
 const MOTIVOS = [
@@ -105,7 +105,7 @@ function PainelAberto({ notas, faixa, onFaixa, onVencidas }) {
 function DiasAberto({ l }) {
   const d = diasAberto(l);
   const cls = d >= 6 ? 'sev-erro' : d >= 3 ? 'sev-alerta' : 'sev-na';
-  return <div><span className={`badge ${cls}`}>{d === 0 ? 'hoje' : `${d} dia${d > 1 ? 's' : ''}`}</span><div className="muted pequeno">desde {data(String(l.recebido_em).slice(0, 10))}</div></div>;
+  return <div><span className={`badge ${cls}`}>{d === 0 ? 'hoje' : `${d} dia${d > 1 ? 's' : ''}`}</span><div className="muted pequeno" title={`chegou em ${data(String(l.recebido_em).slice(0, 10))}`}>desde {dataCurta(l.recebido_em)}</div></div>;
 }
 
 const COLUNAS_EXPORT = [
@@ -143,10 +143,10 @@ function Urgencia({ l }) {
   if (venc) {
     const d = diasEntre(hoje, venc);
     const cls = d < 0 ? 'sev-erro' : d <= 3 ? 'sev-alerta' : 'sev-na';
-    return <div><span className={`badge ${cls}`}>{d < 0 ? `venceu há ${-d}d` : d === 0 ? 'vence hoje' : `vence em ${d}d`}</span><div className="muted pequeno">{data(venc)}</div></div>;
+    return <div><span className={`badge ${cls}`}>{d < 0 ? `venceu há ${-d}d` : d === 0 ? 'vence hoje' : `vence em ${d}d`}</span><div className="muted pequeno" title={data(venc)}>{dataCurta(venc)}</div></div>;
   }
   // Sem boleto/vencimento: o tempo de espera aparece na coluna "Em aberto"
-  return <span className="muted pequeno" title="Nenhum vencimento informado (sem boleto e sem data na nota)">sem vencimento</span>;
+  return <span className="muted" title="Sem vencimento: nenhum boleto nem data na nota">—</span>;
 }
 
 function ModalNaoLancar({ nota, onFechar, onFeito }) {
@@ -273,17 +273,19 @@ export default function Fila() {
                     <tr key={l.id} className="clicavel" onClick={() => navegar(`/documentos/${l.id}`)}>
                       <td><Urgencia l={l} /></td>
                       <td className="nowrap"><DiasAberto l={l} /></td>
-                      <td><strong>{l.numero ?? '—'}</strong><div className="muted pequeno">{TIPOS_DOC[l.tipo] ?? l.tipo} · emitida {data(l.data_emissao)}</div></td>
-                      <td>{l.emitente_nome ?? <span className="muted" title="Nome do prestador não encontrado no PDF">{cnpj(l.emitente_cnpj)}</span>}</td>
-                      <td className="pequeno">{l.empresa_nome ?? <span className="badge sev-erro">Não identificada</span>}</td>
+                      <td className="nowrap" title={`${TIPOS_DOC[l.tipo] ?? l.tipo} emitida em ${data(l.data_emissao)}`}><strong>{l.numero ?? '—'}</strong><div className="muted pequeno">{TIPOS_DOC[l.tipo] ?? l.tipo} · {dataCurta(l.data_emissao)}</div></td>
+                      <td style={{ maxWidth: 200 }}>{l.emitente_nome
+                        ? <div className="truncar" title={`${l.emitente_nome} · ${cnpj(l.emitente_cnpj)}`}>{l.emitente_nome}</div>
+                        : <span className="muted" title="Nome do prestador não encontrado no PDF">{cnpj(l.emitente_cnpj)}</span>}</td>
+                      <td style={{ maxWidth: 150 }}>{l.empresa_nome ? <div className="truncar" title={l.empresa_nome}>{l.empresa_nome}</div> : <span className="badge sev-erro">Não identificada</span>}</td>
                       <td className="num"><strong>{brl(l.v_liquido ?? l.v_total)}</strong>{l.v_liquido != null && l.v_total - l.v_liquido > 0.009 && <div className="muted pequeno" title="Valor da nota antes das retenções">bruto {brl(l.v_total)}</div>}</td>
                       <td><NotaArquivo l={l} /></td>
                       <td className="nowrap"><BoletoInfo l={l} /></td>
                       <td className="nowrap"><OrdemCompra l={l} /></td>
-                      <td style={{ maxWidth: 260 }}>{temProblema(l)
+                      <td style={{ maxWidth: 180 }}>{temProblema(l)
                         ? <span className="badge sev-erro" title={l.problema_principal ?? ''}>{l.situacao_sefaz === 'cancelada' ? 'Cancelada' : l.status === 'DUPLICADA' ? 'Possível duplicada' : 'Verificar'}</span>
                         : <span className="muted">—</span>}
-                        {l.qtd_erros > 0 && <div className="muted pequeno">{l.problema_principal}</div>}
+                        {l.qtd_erros > 0 && <div className="muted pequeno truncar" title={l.problema_principal ?? ''}>{l.problema_principal}</div>}
                       </td>
                       <td className="nowrap" onClick={(e) => e.stopPropagation()}>
                         {pode('decidir') && <button className="btn pequeno ghost" onClick={() => setNaoLancar(l)}>Não lançar</button>}
