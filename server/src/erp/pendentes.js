@@ -266,7 +266,8 @@ export async function painelPendentes(filtros = {}) {
       pendentes: pendentes.length, pendentes_valor: soma(pendentes, (i) => i.valor),
       lancadas: lancadas.length, lancadas_valor: soma(lancadas, (i) => i.valor),
       recebidas_hoje: doDia(itens, 'recebido_em').length,
-      lancadas_hoje: itens.filter((i) => i.entrada?.data === dia).length,
+      // "hoje" pela data do lançamento (como na aba Produtividade), de XMLs recebidos; vem da série do gráfico
+      lancadas_hoje: porDia.get(dia)?.lancadas ?? itens.filter((i) => i.entrada?.data === dia).length,
       pendentes_hoje: doDia(pendentes, 'recebido_em').length,
       canceladas_pendentes: pendentes.filter((i) => i.cancelada).length,
       paradas_mais_5: pendentes.filter((i) => (i.dias_parada ?? 0) > 5).length,

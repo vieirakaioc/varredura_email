@@ -212,8 +212,9 @@ export default function Lancamentos() {
       {carregando && !dados ? <Carregando /> : k && (
         <>
           <div className="grade grade-kpi monetario quatro">
-            <Kpi rotulo="Notas lançadas" valor={numero(k.notas)} detalhe={brl(k.valor)} cor="var(--serie-1)" />
-            <Kpi rotulo="Hoje" valor={numero(k.hoje)} detalhe={`${numero(k.pessoas_hoje)} pessoa(s) lançando`} cor="var(--status-bom)" />
+            <Kpi rotulo="Notas lançadas" valor={numero(k.notas)} detalhe={`${brl(k.valor)} · ${numero(k.com_xml ?? 0)} de XML`} cor="var(--serie-1)"
+              titulo={`Todas as notas de entrada do período (${dados.base === 'entrada' ? 'pela data de entrada' : 'pela data do lançamento'}), inclusive digitadas. A aba Pendentes conta só as que vieram de XML recebido.`} />
+            <Kpi rotulo="Lançadas hoje" titulo="Notas lançadas hoje (data do lançamento), de XML ou digitadas" valor={numero(k.hoje)} detalhe={`${numero(k.pessoas_hoje)} pessoa(s) lançando`} cor="var(--status-bom)" />
             <Kpi rotulo="Média por dia" valor={numero(k.media_dia, 1)} detalhe={k.melhor_dia ? `melhor dia: ${data(k.melhor_dia.dia)} (${numero(k.melhor_dia.notas)})` : ''} />
             <Kpi rotulo="Pico do dia" valor={k.pico_hora?.rotulo ?? '—'} detalhe={`${numero(k.pico_hora?.notas ?? 0)} notas nessa hora`} cor="var(--pend)" />
             <Kpi rotulo="Prazo médio do XML" valor={`${numero(k.prazo_medio ?? 0, 1)} dia(s)`} detalhe={`${numero(k.no_mesmo_dia ?? 0)}% lançadas no mesmo dia`} cor="var(--ok)" />

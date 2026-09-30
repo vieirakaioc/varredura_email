@@ -188,8 +188,8 @@ function PainelPendentes() {
               {dados.tudo_aberto
                 ? <Kpi rotulo="Mais antiga em aberto" valor={`${numero(k.mais_antiga)} dia(s)`} detalhe="sem limite de data" cor="var(--dup)" />
                 : <>
-                  <Kpi rotulo="Lançadas hoje" valor={numero(k.lancadas_hoje)} detalhe={`saldo do dia: ${k.recebidas_hoje - k.lancadas_hoje >= 0 ? '+' : ''}${numero(k.recebidas_hoje - k.lancadas_hoje)}`} cor="var(--status-bom)" />
-                  <Kpi rotulo="Lançadas no período" valor={numero(k.lancadas)} detalhe={`${Math.round((k.lancadas / (k.total || 1)) * 100)}% do que chegou`} cor="var(--ok)" onClick={() => setFiltro('situacoes', 'processada')} />
+                  <Kpi rotulo="Lançadas hoje (de XML)" titulo="Notas lançadas hoje no Senior a partir de um XML recebido, pela data do lançamento. A aba Produtividade conta também as digitadas." valor={numero(k.lancadas_hoje)} detalhe={`saldo do dia: ${k.recebidas_hoje - k.lancadas_hoje >= 0 ? '+' : ''}${numero(k.recebidas_hoje - k.lancadas_hoje)}`} cor="var(--status-bom)" />
+                  <Kpi rotulo="XMLs do período já lançados" titulo="Dos XMLs recebidos no período (por data do XML), quantos já viraram nota de entrada. Não é o mesmo que 'notas lançadas no período' da aba Produtividade, que conta pela data de entrada e inclui as digitadas." valor={numero(k.lancadas)} detalhe={`${Math.round((k.lancadas / (k.total || 1)) * 100)}% do que chegou`} cor="var(--ok)" onClick={() => setFiltro('situacoes', 'processada')} />
                 </>}
               {k.canceladas_pendentes > 0 && <Kpi rotulo="Canceladas na SEFAZ" valor={numero(k.canceladas_pendentes)} detalhe="pendentes que NÃO devem ser lançadas" cor="var(--dup)" />}
             </div>

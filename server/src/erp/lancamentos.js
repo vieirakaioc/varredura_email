@@ -274,7 +274,8 @@ export async function painelLancamentos(filtros = {}) {
     valor: soma(doPeriodo.filter((i) => i.situacao === chave), (i) => i.valor),
   })).filter((s) => s.notas > 0);
   const prazos = itens.map((i) => i.dias_ate_lancar).filter((v) => v != null);
-  const doDiaHoje = itens.filter((i) => i.dia === hoje);
+  // "hoje" = lançadas hoje (data de geração), qualquer que seja a data base da tela
+  const doDiaHoje = itens.filter((i) => (i.geracao ?? i.dia) === hoje);
   const pessoaDias = new Set(itens.map((i) => `${i.usuario}|${i.geracao ?? i.dia}`)).size;
   // Resumo por equipe (ignora o próprio filtro de equipe, para os dois blocos aparecerem sempre)
   const porEquipe = Object.entries(EQUIPES).map(([chave, rotulo]) => {
@@ -314,6 +315,7 @@ export async function painelLancamentos(filtros = {}) {
       prazo_medio: prazos.length ? Math.round(media(prazos) * 10) / 10 : null,
       no_mesmo_dia: prazos.length ? Math.round((prazos.filter((p) => p === 0).length / prazos.length) * 100) : null,
       pct_com_xml: itens.length ? Math.round((itens.filter((i) => i.com_xml).length / itens.length) * 100) : 0,
+      com_xml: itens.filter((i) => i.com_xml).length,
       // produtividade: notas por pessoa em cada dia trabalhado
       media_pessoa_dia: pessoaDias ? Math.round((itens.length / pessoaDias) * 10) / 10 : null,
       total_periodo: todos.length,
