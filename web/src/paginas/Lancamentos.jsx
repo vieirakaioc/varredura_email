@@ -340,8 +340,10 @@ export default function Lancamentos() {
           </Cartao>
 
           <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
-            <Cartao titulo="Escrita Fiscal: média por dia × meta" sub={`meta ${numero(dados.metas.padrao)}/dia por pessoa`}>
-              <ResponsiveContainer width="100%" height={Math.max(180, fiscais.length * 34 + 40)}>
+            <Cartao className="preenche" titulo="Escrita Fiscal: média por dia × meta" sub={`meta ${numero(dados.metas.padrao)}/dia por pessoa`}>
+              {/* cresce até a altura da coluna ao lado (Por empresa + Origem), sem deixar espaço vazio */}
+              <div style={{ flex: 1, minHeight: Math.max(180, fiscais.length * 34 + 40) }}>
+              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={fiscais} layout="vertical" margin={{ left: 8, right: 40, top: 4 }} barGap={2}>
                   <CartesianGrid horizontal={false} stroke="var(--grade)" />
                   <XAxis type="number" allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} />
@@ -367,6 +369,7 @@ export default function Lancamentos() {
                   <Bar isAnimationActive={false} dataKey="meta_dia" name="Meta" fill="var(--texto-3)" fillOpacity={0.35} radius={[0, 4, 4, 0]} maxBarSize={14} />
                 </BarChart>
               </ResponsiveContainer>
+              </div>
             </Cartao>
 
             <div className="coluna">
