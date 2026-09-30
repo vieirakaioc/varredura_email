@@ -186,7 +186,6 @@ export async function painelPendentes(filtros = {}) {
   let itens = linhas.map((l) => montarItemClassificado(l, canceladas, dia));
 
   if (filtros.codemp) itens = itens.filter((i) => String(i.codemp) === String(filtros.codemp) && (!filtros.codfil || String(i.codfil) === String(filtros.codfil)));
-  if (filtros.empresa) itens = itens.filter((i) => chaveEmpresa(i) === filtros.empresa);
   // A base do Senior também recebe XMLs de terceiros: por padrão, só o que é destinado ao grupo
   const foraDoGrupo = itens.filter((i) => !i.empresa_do_grupo).length;
   if (filtros.incluir_terceiros !== '1') itens = itens.filter((i) => i.empresa_do_grupo);
@@ -211,6 +210,10 @@ export async function painelPendentes(filtros = {}) {
   // Tipo: entradas (documentos de terceiros para nós) ou saídas (emitidos pelo grupo)
   if (filtros.tipo === 'saidas') itens = itens.filter((i) => i.tipo_movimento === 'saida');
   else if (filtros.tipo !== 'todos') itens = itens.filter((i) => i.tipo_movimento === 'entrada');
+  // Filtro de empresa (clique no cartão "Pendentes por empresa") por último: o cartão e as caixas de
+  // seleção continuam mostrando todas as empresas, com a escolhida em destaque
+  const pendentesTodasEmpresas = itens.filter((i) => !i.lancada && !i.nossa_saida);
+  if (filtros.empresa) itens = itens.filter((i) => chaveEmpresa(i) === filtros.empresa);
 
   const pendentes = itens.filter((i) => !i.lancada && !i.nossa_saida);
   const lancadas = itens.filter((i) => i.lancada);
@@ -278,7 +281,7 @@ export async function painelPendentes(filtros = {}) {
     },
     por_situacao: porSituacao,
     serie,
-    por_empresa: agrupar(pendentes, chaveEmpresa, (i) => `${i.empresa}${i.uf ? ` (${i.uf})` : ''}`).slice(0, 12),
+    por_empresa: agrupar(pendentesTodasEmpresas, chaveEmpresa, (i) => `${i.empresa}${i.uf ? ` (${i.uf})` : ''}`).slice(0, 40),
     por_especie: agrupar(pendentes, (i) => i.especie_rotulo, (i) => i.especie_rotulo),
     por_fornecedor: agrupar(pendentes, (i) => i.cnpj_fornecedor, (i) => i.fornecedor ?? i.cnpj_fornecedor).slice(0, 50),
     aging: FAIXAS.map((f) => ({

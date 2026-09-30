@@ -200,6 +200,19 @@ function PainelPendentes() {
               Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
             </div>
 
+            {(f.empresa || f.especie || f.faixa || f.fornecedor) && (
+              <div className="linha pequeno" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <strong className="muted">Filtrando por:</strong>
+                {f.empresa && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('empresa', '')}>
+                  Empresa: <strong>{codigoEmpresa(f.empresa)} {dados.por_empresa.find((x) => x.chave === f.empresa)?.rotulo ?? ''}</strong> ✕</button>}
+                {f.especie && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('especie', '')}>Documento: <strong>{f.especie}</strong> ✕</button>}
+                {f.faixa && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('faixa', '')}>Espera: <strong>{dados.aging.find((x) => x.id === f.faixa)?.rotulo ?? f.faixa}</strong> ✕</button>}
+                {f.fornecedor && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => { setBusca(''); setFiltro('fornecedor', ''); }}>Fornecedor: <strong>{f.fornecedor}</strong> ✕</button>}
+                <button className="btn pequeno" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes, ...(f.sem_empresas ? { sem_empresas: f.sem_empresas } : {}), ...(f.mes ? { mes: f.mes } : {}) }); }}>Limpar filtros</button>
+                {carregando && <span className="muted">atualizando…</span>}
+              </div>
+            )}
+
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
               <Cartao titulo="Chegada × lançamento" sub="últimos 21 dias · XMLs recebidos por dia e notas lançadas por dia (a partir de XML)">
                 <div className="grafico-legenda">
@@ -247,7 +260,7 @@ function PainelPendentes() {
             </div>
 
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr)' }}>
-              <Cartao titulo="Pendentes por empresa" sub="clique para filtrar" semPadding>
+              <Cartao titulo="Pendentes por empresa" sub={f.empresa ? 'clique de novo para ver todas' : 'clique para filtrar'} semPadding>
                 <div style={{ padding: 12 }}>
                   {dados.por_empresa.map((x) => {
                     const max = Math.max(...dados.por_empresa.map((y) => y.qtd), 1);
