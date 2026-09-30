@@ -240,10 +240,10 @@ export default function Lancamentos() {
           <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
             <Cartao titulo="Lançamentos por dia" sub="clique num dia para filtrar · linha = meta de quem lançou no dia">
               <ResponsiveContainer width="100%" height={230}>
-                <ComposedChart data={dados.por_dia} margin={{ left: -18, right: 8, top: 22 }} barCategoryGap="20%">
+                <ComposedChart data={dados.por_dia} margin={{ left: 0, right: 8, top: 22 }} barCategoryGap="20%">
                   <CartesianGrid vertical={false} stroke="var(--grade)" />
                   <XAxis dataKey="dia" tickFormatter={diaCurto} tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} minTickGap={8} />
-                  <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={44} />
+                  <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={36} />
                   <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
                     <div className="tooltip-grafico">
                       <div className="t">{data(payload[0].payload.dia)}</div>
@@ -258,8 +258,9 @@ export default function Lancamentos() {
                       <Cell key={d.dia} fill={d.meta != null && d.notas >= d.meta ? 'var(--status-bom)' : 'var(--serie-1)'}
                         fillOpacity={!f.dia || f.dia === d.dia ? 1 : 0.3} />
                     ))}
-                    {/* com muitos dias os números se sobrepõem: aí o valor fica só no tooltip */}
-                    {dados.por_dia.length <= 16 && <LabelList dataKey="notas" position="top" style={rotulo} formatter={(v) => (v ? numero(v) : '')} />}
+                    {/* com muitos dias o rótulo fica menor para os números não se encostarem */}
+                    <LabelList dataKey="notas" position="top" offset={4} formatter={(v) => (v ? numero(v) : '')}
+                      style={{ ...rotulo, fontSize: dados.por_dia.length > 16 ? 9 : 10 }} />
                   </Bar>
                   <Line isAnimationActive={false} type="stepAfter" dataKey="meta" name="Meta" stroke="var(--status-critico)" strokeDasharray="5 4" strokeWidth={2} dot={false} />
                 </ComposedChart>
@@ -268,10 +269,10 @@ export default function Lancamentos() {
 
             <Cartao titulo="Distribuição por hora" sub="clique numa hora para filtrar">
               <ResponsiveContainer width="100%" height={230}>
-                <BarChart data={dados.por_hora.filter((h) => h.notas > 0 || (h.hora >= 6 && h.hora <= 20))} margin={{ left: -18, right: 8, top: 22 }} barCategoryGap="14%">
+                <BarChart data={dados.por_hora.filter((h) => h.notas > 0 || (h.hora >= 6 && h.hora <= 20))} margin={{ left: 0, right: 8, top: 22 }} barCategoryGap="14%">
                   <CartesianGrid vertical={false} stroke="var(--grade)" />
                   <XAxis dataKey="rotulo" tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} interval={1} />
-                  <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={44} />
+                  <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={36} />
                   <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
                     <div className="tooltip-grafico"><div className="t">{payload[0].payload.rotulo}</div><div><strong>{numero(payload[0].payload.notas)}</strong> nota(s)</div><div className="muted pequeno">Clique para filtrar</div></div>
                   ) : null)} />
