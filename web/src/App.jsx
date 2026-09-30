@@ -20,6 +20,7 @@ import Integracoes from './paginas/Integracoes.jsx';
 import Financeiro from './paginas/Financeiro.jsx';
 import Entradas from './paginas/Entradas.jsx';
 import Sefaz from './paginas/Sefaz.jsx';
+import Pendentes from './paginas/Pendentes.jsx';
 
 // Menu enxuto: o dia a dia é "lançar" (fiscal) e "pagar" (financeiro). O resto é configuração.
 // Painel executivo e Fornecedores continuam acessíveis por link (/painel, /fornecedores), fora do menu.
@@ -28,6 +29,7 @@ const MENU = [
   { para: '/fila', rotulo: 'Notas a lançar', icone: 'fila', contador: true },
   { para: '/financeiro', rotulo: 'A pagar', icone: 'financeiro', permissao: 'financeiro' },
   { para: '/documentos', rotulo: 'Todas as notas', icone: 'docs' },
+  { para: '/pendentes', rotulo: 'Pendentes de lançamento', icone: 'painel' },
   { para: '/entradas', rotulo: 'Transação × CFOP', icone: 'regras' },
   { para: '/sefaz', rotulo: 'Canceladas na SEFAZ', icone: 'auditoria' },
   { para: '/importar', rotulo: 'Enviar nota avulsa', icone: 'upload', permissao: 'decidir' },
@@ -127,6 +129,7 @@ export default function App() {
           <Route path="/financeiro" element={<Financeiro />} />
           <Route path="/entradas" element={<Entradas />} />
           <Route path="/sefaz" element={<Sefaz />} />
+          <Route path="/pendentes" element={<Pendentes />} />
           <Route path="/fornecedores" element={<Fornecedores />} />
           <Route path="/fornecedores/:id" element={<Fornecedores />} />
           <Route path="/empresas" element={<Empresas />} />

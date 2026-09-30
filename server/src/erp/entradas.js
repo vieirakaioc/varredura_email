@@ -135,8 +135,9 @@ export function avaliarLinha(l, { mapaDepara, hist }) {
 export async function listarEntradas(filtros = {}) {
   if (!seniorConfigurado()) throw new Error('Senior não configurado');
   const hoje = new Date();
-  const de = filtros.de ? new Date(`${filtros.de}T00:00:00`) : new Date(hoje.getTime() - 7 * 86400000);
-  let ate = filtros.ate ? new Date(`${filtros.ate}T23:59:59`) : hoje;
+  // Datas em UTC ("Z"): sem isso o driver desloca 3 horas e o primeiro dia do período fica de fora
+  const de = filtros.de ? new Date(`${filtros.de}T00:00:00Z`) : new Date(hoje.getTime() - 7 * 86400000);
+  let ate = filtros.ate ? new Date(`${filtros.ate}T23:59:59Z`) : hoje;
   if (ate - de > 62 * 86400000) ate = new Date(de.getTime() + 62 * 86400000); // no máximo ~2 meses por consulta
   const extras = { ate };
   const cond = ['1 = 1'];

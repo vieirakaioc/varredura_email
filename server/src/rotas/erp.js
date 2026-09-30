@@ -65,6 +65,16 @@ rotasErpAdmin.get('/entradas', permitir('ver'), async (req, res) => {
   const { listarEntradas } = await import('../erp/entradas.js');
   try { res.json(await listarEntradas(req.query)); } catch (e) { erroSenior(res, e); }
 });
+rotasErpAdmin.get('/pendentes-lancamento', permitir('ver'), async (req, res) => {
+  const { painelPendentes } = await import('../erp/pendentes.js');
+  try { res.json(await painelPendentes(req.query)); } catch (e) { erroSenior(res, e); }
+});
+
+rotasErpAdmin.get('/lancamentos', permitir('ver'), async (req, res) => {
+  const { painelLancamentos } = await import('../erp/lancamentos.js');
+  try { res.json(await painelLancamentos(req.query)); } catch (e) { erroSenior(res, e); }
+});
+
 rotasErpAdmin.get('/entradas/transacoes', permitir('ver'), async (req, res) => {
   const { resumoTransacoes } = await import('../erp/entradas.js');
   try { res.json(await resumoTransacoes()); } catch (e) { erroSenior(res, e); }

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { baixar, exportarExcel } from './api.js';
 
 // ------------------------------------------------------------------ formatação
@@ -249,16 +250,50 @@ const ATUALIZAR_A_CADA_MS = 60000;
  * com o Senior e a leitura dos e-mails rodam em segundo plano). A atualização automática é
  * silenciosa: mantém os dados na tela enquanto busca, sem piscar "Carregando".
  */
+/**
+ * Guarda os filtros da tela (a query string) na sessão do navegador e os devolve
+ * quando se volta para ela sem filtros na URL — sair da tela e voltar não perde o que estava filtrado.
+ * `ignorar`: parâmetros que não contam como filtro, como a aba ativa.
+ */
+export function filtrosLembrados(chave) {
+  try { return sessionStorage.getItem(`filtros:${chave}`) ?? ''; } catch { return ''; }
+}
+
+export function useFiltrosLembrados(chave, ignorar = []) {
+  const [params, setParams] = useSearchParams();
+  const atual = params.toString();
+  const primeira = useRef(true);
+  useEffect(() => {
+    const agora = new URLSearchParams(atual);
+    const semFiltros = [...agora.keys()].every((k) => ignorar.includes(k));
+    if (primeira.current) {
+      primeira.current = false;
+      const salvo = filtrosLembrados(chave);
+      if (semFiltros && salvo) {
+        const novo = new URLSearchParams(salvo);
+        for (const k of ignorar) (agora.get(k) ? novo.set(k, agora.get(k)) : novo.delete(k));
+        setParams(novo, { replace: true });
+        return;  // grava no ciclo seguinte, já com os filtros restaurados
+      }
+    }
+    try { sessionStorage.setItem(`filtros:${chave}`, atual); } catch { /* sessão indisponível: segue sem lembrar */ }
+  }, [atual]);
+}
+
 export function useDados(fn, deps = [], { automatico = true } = {}) {
   const [estado, setEstado] = useState({ dados: null, erro: null, carregando: true });
   const [n, setN] = useState(0);
   const [silencioso, setSilencioso] = useState(0);
   const fnRef = useRef(fn);
   fnRef.current = fn;
+  // "Atualizar" pede dados novos de verdade: a função recebe { forcar } para furar o cache do servidor
+  const forcar = useRef(false);
   useEffect(() => {
     let vivo = true;
     setEstado((e) => ({ ...e, carregando: true }));
-    fnRef.current().then((dados) => vivo && setEstado({ dados, erro: null, carregando: false }))
+    const pedido = fnRef.current({ forcar: forcar.current });
+    forcar.current = false;
+    pedido.then((dados) => vivo && setEstado({ dados, erro: null, carregando: false }))
       .catch((erro) => vivo && setEstado({ dados: null, erro, carregando: false }));
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +301,7 @@ export function useDados(fn, deps = [], { automatico = true } = {}) {
   useEffect(() => {
     if (!silencioso) return undefined;
     let vivo = true;
-    fnRef.current().then((dados) => vivo && setEstado({ dados, erro: null, carregando: false })).catch(() => {});
+    fnRef.current({}).then((dados) => vivo && setEstado({ dados, erro: null, carregando: false })).catch(() => {});
     return () => { vivo = false; };
   }, [silencioso]);
   useEffect(() => {
@@ -277,7 +312,7 @@ export function useDados(fn, deps = [], { automatico = true } = {}) {
     const h = setInterval(atualizar, ATUALIZAR_A_CADA_MS);
     return () => { window.removeEventListener('dados-alterados', atualizar); document.removeEventListener('visibilitychange', atualizar); clearInterval(h); };
   }, []);
-  return { ...estado, recarregar: () => setN((x) => x + 1) };
+  return { ...estado, recarregar: () => { forcar.current = true; setN((x) => x + 1); } };
 }
 
 export function Erro({ erro }) {

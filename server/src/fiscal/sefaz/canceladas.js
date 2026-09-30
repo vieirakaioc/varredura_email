@@ -82,7 +82,7 @@ export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas } = {}) {
   const extras = [];
   if (seniorConfigurado() && senior === 'ok') {
     try {
-      for (const l of await consultar(SQL_SAIDAS_CANCELADAS, new Date(`${periodo.de}T00:00:00`), { ate: new Date(`${periodo.ate}T23:59:59`) })) {
+      for (const l of await consultar(SQL_SAIDAS_CANCELADAS, new Date(`${periodo.de}T00:00:00Z`), { ate: new Date(`${periodo.ate}T23:59:59Z`) })) {
         const chave = String(l.CHVDOE ?? '').trim();
         // Já veio pela SEFAZ: descarta o registro do Senior (e apaga o que tenha sobrado de execuções anteriores)
         if (eventos.some((e) => e.chave === chave && e.nsu !== 'senior-saida')) {

@@ -1,0 +1,360 @@
+import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { api, qs } from '../api.js';
+import { Topo } from '../contexto.jsx';
+import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
+import Lancamentos from './Lancamentos.jsx';
+
+const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
+const brlCurto = (v) => (Math.abs(v) >= 1000000 ? `R$ ${(v / 1000000).toFixed(1)} mi` : Math.abs(v) >= 1000 ? `R$ ${Math.round(v / 1000)} mil` : brl(v));
+const diaCurto = (v) => `${String(v).slice(8, 10)}/${String(v).slice(5, 7)}`;
+// Código da empresa: "empresa/filial" do Senior; fora do grupo a identidade é o CNPJ
+const codigoEmpresa = (chave) => (/^\d+\/\d+$/.test(String(chave)) ? String(chave) : fmtCnpj(chave));
+
+const COR_FAIXA = ['var(--status-bom)', 'var(--serie-1)', 'var(--status-atencao)', '#e8833a', 'var(--status-critico)'];
+// rótulo de dados nas colunas
+const ROTULO = { fontSize: 10, fill: 'var(--texto-2)', fontWeight: 600 };
+const NOMES_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+// Últimos 12 meses para o filtro de período
+const MESES_FILTRO = Array.from({ length: 12 }, (_, i) => {
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+  return { valor: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, rotulo: `${NOMES_MES[d.getMonth()]}/${d.getFullYear()}` };
+});
+
+const COLUNAS_EXPORT = [
+  { titulo: 'Recebida em', tipo: 'data', valor: (l) => l.recebido_em },
+  { titulo: 'Dias parada', tipo: 'numero', valor: (l) => l.dias_parada },
+  { titulo: 'Emissão', tipo: 'data', valor: (l) => l.emissao },
+  { titulo: 'Documento', valor: (l) => l.especie_rotulo },
+  { titulo: 'Número', valor: (l) => l.numero },
+  { titulo: 'Chave de acesso', valor: (l) => l.chave },
+  { titulo: 'Fornecedor', valor: (l) => l.fornecedor },
+  { titulo: 'CNPJ fornecedor', valor: (l) => fmtCnpj(l.cnpj_fornecedor) },
+  { titulo: 'Empresa destinatária', valor: (l) => l.empresa },
+  { titulo: 'Emp/Fil', valor: (l) => (l.empresa_do_grupo ? `${l.codemp}/${l.codfil}` : '') },
+  { titulo: 'UF', valor: (l) => l.uf },
+  { titulo: 'Valor', tipo: 'moeda', valor: (l) => l.valor },
+  { titulo: 'Situação', valor: (l) => l.situacao_rotulo },
+  { titulo: 'Motivo', valor: (l) => (l.cancelada ? 'Cancelada na SEFAZ' : !l.empresa_do_grupo ? 'Destinatário fora do grupo' : !l.fornecedor_cadastrado ? 'Fornecedor não cadastrado' : l.itens === 0 ? 'XML sem itens' : !(l.valor > 0) ? 'Valor zerado' : '') },
+  { titulo: 'Tipo', valor: (l) => (l.tipo_movimento === 'saida' ? 'Saída' : 'Entrada') },
+  { titulo: 'Entrada no Senior', tipo: 'data', valor: (l) => l.entrada?.data },
+  { titulo: 'Observação do XML', valor: (l) => l.observacao },
+];
+
+function Dica({ active, payload, label, sufixo }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="tooltip-grafico">
+      <div className="t">{sufixo ? `${sufixo} ${label}` : label}</div>
+      {payload.map((p) => <div key={p.dataKey}><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: p.color ?? p.fill, marginRight: 6 }} />{p.name}: <strong>{numero(p.value)}</strong></div>)}
+    </div>
+  );
+}
+
+export default function Pendentes() {
+  const [params] = useSearchParams();
+  return params.get('aba') === 'lancamentos' ? <ComAbas><Lancamentos /></ComAbas> : <ComAbas><PainelPendentes /></ComAbas>;
+}
+
+/** Cabeçalho comum das duas visões: o que falta lançar e quem está lançando. */
+function ComAbas({ children }) {
+  const [params, setParams] = useSearchParams();
+  const aba = params.get('aba') ?? 'pendentes';
+  // Cada aba lembra os próprios filtros: trocar de aba (ou de tela) não zera o que estava filtrado
+  const trocarAba = (alvo) => {
+    const p = new URLSearchParams(filtrosLembrados(alvo));
+    if (alvo === 'lancamentos') p.set('aba', 'lancamentos'); else p.delete('aba');
+    setParams(p);
+  };
+  return (
+    <>
+      <Topo titulo="Lançamento de notas" descricao="XMLs recebidos no Senior, o que falta lançar e a produtividade da equipe." />
+      <div className="pagina">
+        <div className="abas" style={{ padding: 0 }}>
+          <button className={aba === 'pendentes' ? 'ativa' : ''} onClick={() => trocarAba('pendentes')}>Pendentes de lançamento</button>
+          <button className={aba === 'lancamentos' ? 'ativa' : ''} onClick={() => trocarAba('lancamentos')}>Produtividade do lançamento</button>
+        </div>
+        {children}
+      </div>
+    </>
+  );
+}
+
+function PainelPendentes() {
+  useFiltrosLembrados('pendentes', ['aba']);
+  const [params, setParams] = useSearchParams();
+  const f = {
+    dias: params.get('dias') ?? '60', mes: params.get('mes') ?? '',
+    empresa: params.get('empresa') ?? '', especie: params.get('especie') ?? '', fornecedor: params.get('fornecedor') ?? '',
+    incluir_terceiros: params.get('incluir_terceiros') ?? '', faixa: params.get('faixa') ?? '',
+    tipo: params.get('tipo') ?? 'entradas',
+    situacoes: params.get('situacoes') ?? 'pendente,inconsistente,incompleta',
+    sem_empresas: params.get('sem_empresas') ?? '',
+  };
+  const empresasExcluidas = f.sem_empresas.split(',').filter(Boolean);
+  const alternarEmpresa = (chave) => {
+    const nova = empresasExcluidas.includes(chave) ? empresasExcluidas.filter((e) => e !== chave) : [...empresasExcluidas, chave];
+    setFiltro('sem_empresas', nova.join(','));
+  };
+  const situacoesEscolhidas = f.situacoes.split(',').filter(Boolean);
+  const alternarSituacao = (chave) => {
+    const nova = situacoesEscolhidas.includes(chave) ? situacoesEscolhidas.filter((s) => s !== chave) : [...situacoesEscolhidas, chave];
+    setFiltro('situacoes', nova.join(',') || 'pendente');
+  };
+  const [busca, setBusca] = useState(f.fornecedor);
+  const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ ...f, [k]: v }).filter(([, x]) => x !== '' && x != null)));
+  const { dados, erro, carregando, recarregar } = useDados(
+    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros })}`),
+    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros], { automatico: false },
+  );
+  const k = dados?.indicadores;
+  const itens = (dados?.itens ?? []).filter((l) => {
+    if (!f.faixa) return true;
+    const [de, ate] = f.faixa === '31+' ? [31, Infinity] : f.faixa.split('-').map(Number);
+    return (l.dias_parada ?? 0) >= de && (l.dias_parada ?? 0) <= ate;
+  });
+
+  return (
+    <>
+      <Cartao>
+        <div className="linha" style={{ gap: 14, flexWrap: 'wrap' }}>
+          <select value={f.mes} onChange={(e) => setFiltro('mes', e.target.value)} aria-label="Mês">
+            <option value="">Por período (dias)</option>
+            {MESES_FILTRO.map((m) => <option key={m.valor} value={m.valor}>{m.rotulo}</option>)}
+          </select>
+          <select value={f.dias} onChange={(e) => setFiltro('dias', e.target.value)} aria-label="Período" disabled={Boolean(f.mes)}>
+            {[15, 30, 60, 90, 180].map((d) => <option key={d} value={d}>Últimos {d} dias</option>)}
+            <option value="tudo">Tudo em aberto (sem limite de data)</option>
+          </select>
+          {/* mesmos filtros da tela do Senior: tipo e situação */}
+          <div className="linha pequeno" style={{ gap: 8 }}>
+            <strong className="muted">Tipo:</strong>
+            {[['entradas', 'Entradas'], ['saidas', 'Saídas'], ['todos', 'Todos']].map(([v, r]) => (
+              <label key={v} className="linha" style={{ gap: 4 }}>
+                <input type="radio" name="tipo" checked={f.tipo === v} onChange={() => setFiltro('tipo', v)} />{r}
+              </label>
+            ))}
+          </div>
+          <div className="linha pequeno" style={{ gap: 8 }}>
+            <strong className="muted">Situação:</strong>
+            {(dados?.por_situacao ?? [{ chave: 'pendente', rotulo: 'Pendente' }, { chave: 'inconsistente', rotulo: 'Inconsistente' }, { chave: 'incompleta', rotulo: 'Incompleta' }, { chave: 'processada', rotulo: 'Processada' }]).map((s) => (
+              <label key={s.chave} className="linha" style={{ gap: 4 }} title={s.chave === 'incompleta' ? 'Falta cadastro para lançar (fornecedor não cadastrado ou XML sem itens)' : s.chave === 'inconsistente' ? 'Cancelada na SEFAZ, destinatário fora do grupo ou valor zerado' : s.chave === 'processada' ? 'Já virou nota de entrada' : 'Pronta para lançar'}>
+                <input type="checkbox" checked={situacoesEscolhidas.includes(s.chave)} onChange={() => alternarSituacao(s.chave)} />
+                {s.rotulo}{s.qtd != null ? ` (${numero(s.qtd)})` : ''}
+              </label>
+            ))}
+          </div>
+          <button className="btn pequeno" onClick={recarregar}>Atualizar</button>
+          <span className="espaco" />
+          <span className="muted pequeno">Fonte: Via Recebimento de Documento Eletrônico (Senior)</span>
+        </div>
+        {/* Empresas: caixas de seleção para tirar da conta as que não são acompanhadas */}
+        <details className="pequeno" style={{ marginTop: 10 }} open={empresasExcluidas.length > 0}>
+          <summary style={{ cursor: 'pointer' }}>
+            <strong className="muted">Empresas:</strong>{' '}
+            {(() => {
+              const lista = dados?.empresas_disponiveis ?? [];
+              const fora = empresasExcluidas.map((c) => `${codigoEmpresa(c)} ${lista.find((e) => e.chave === c)?.rotulo ?? ''}`.trim()).join(', ');
+              if (!empresasExcluidas.length) return 'todas';
+              // enquanto os dados não chegam ainda não dá para dizer quantas são no total
+              return lista.length ? `${numero(lista.length - empresasExcluidas.length)} de ${numero(lista.length)} — sem ${fora}` : `sem ${fora}`;
+            })()}
+          </summary>
+          <div className="linha" style={{ gap: 8, marginTop: 6 }}>
+            <button className="btn pequeno ghost" onClick={() => setFiltro('sem_empresas', '')} disabled={empresasExcluidas.length === 0}>Marcar todas</button>
+            <button className="btn pequeno ghost" onClick={() => setFiltro('sem_empresas', (dados?.empresas_disponiveis ?? []).map((e) => e.chave).join(','))}>Desmarcar todas</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '4px 12px', marginTop: 8 }}>
+            {(dados?.empresas_disponiveis ?? []).map((e) => (
+              <label key={e.chave} className="linha" style={{ gap: 6 }} title={e.do_grupo ? `Empresa/filial ${e.chave}` : `Fora do grupo · CNPJ ${e.chave}`}>
+                <input type="checkbox" checked={!empresasExcluidas.includes(e.chave)} onChange={() => alternarEmpresa(e.chave)} />
+                <code className="muted">{codigoEmpresa(e.chave)}</code>
+                <span className="truncar">{e.rotulo}</span>
+                <span className="muted">({numero(e.qtd)})</span>
+              </label>
+            ))}
+          </div>
+        </details>
+      </Cartao>
+      <Erro erro={erro} />
+        {carregando && !dados ? <Carregando /> : k && (
+          <>
+            <div className="grade grade-kpi monetario">
+              <Kpi rotulo="Pendentes de lançamento" valor={numero(k.pendentes)} detalhe={brl(k.pendentes_valor)} cor="var(--status-critico)" onClick={() => setFiltro('situacao', 'pendentes')} />
+              <Kpi rotulo="Paradas há mais de 5 dias" valor={numero(k.paradas_mais_5)} detalhe={`mais antiga: ${k.mais_antiga} dia(s)`} cor="var(--status-atencao)" onClick={() => setFiltro('faixa', f.faixa ? '' : '6-10')} />
+              <Kpi rotulo="Chegaram hoje" valor={numero(k.recebidas_hoje)} detalhe={`${numero(k.pendentes_hoje)} ainda sem lançar`} cor="var(--serie-1)" />
+              {dados.tudo_aberto
+                ? <Kpi rotulo="Mais antiga em aberto" valor={`${numero(k.mais_antiga)} dia(s)`} detalhe="sem limite de data" cor="var(--dup)" />
+                : <>
+                  <Kpi rotulo="Lançadas hoje" valor={numero(k.lancadas_hoje)} detalhe={`saldo do dia: ${k.recebidas_hoje - k.lancadas_hoje >= 0 ? '+' : ''}${numero(k.recebidas_hoje - k.lancadas_hoje)}`} cor="var(--status-bom)" />
+                  <Kpi rotulo="Lançadas no período" valor={numero(k.lancadas)} detalhe={`${Math.round((k.lancadas / (k.total || 1)) * 100)}% do que chegou`} cor="var(--ok)" onClick={() => setFiltro('situacao', 'lancadas')} />
+                </>}
+              {k.canceladas_pendentes > 0 && <Kpi rotulo="Canceladas na SEFAZ" valor={numero(k.canceladas_pendentes)} detalhe="pendentes que NÃO devem ser lançadas" cor="var(--dup)" />}
+            </div>
+            <div className="muted pequeno">
+              {dados.tudo_aberto
+                ? <>Fonte: <strong>todos</strong> os XMLs do recebimento do Senior que ainda não viraram nota de entrada, sem limite de data (a consulta já exclui as lançadas, por isso os cartões de “lançadas” não aparecem). </>
+                : <>Fonte: XMLs recebidos no Senior entre {data(dados.periodo.de)} e {data(dados.periodo.ate)}. </>}
+              Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
+            </div>
+
+            <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
+              <Cartao titulo="Chegada × lançamento" sub="últimos 21 dias · quanto entrou e quanto foi lançado por dia">
+                <div className="grafico-legenda">
+                  <span><i style={{ background: 'var(--serie-1)' }} />Recebidas</span>
+                  <span><i style={{ background: 'var(--status-bom)' }} />Lançadas</span>
+                  <span><i style={{ background: 'var(--status-critico)' }} />Ainda pendentes do dia</span>
+                </div>
+                <ResponsiveContainer width="100%" height={230}>
+                  <AreaChart data={dados.serie} margin={{ left: -20, right: 12, top: 22 }}>
+                    <defs>
+                      <linearGradient id="gRec" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--serie-1)" stopOpacity={0.45} />
+                        <stop offset="100%" stopColor="var(--serie-1)" stopOpacity={0.04} />
+                      </linearGradient>
+                      <linearGradient id="gLan" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--status-bom)" stopOpacity={0.4} />
+                        <stop offset="100%" stopColor="var(--status-bom)" stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid vertical={false} stroke="var(--grade)" />
+                    <XAxis dataKey="dia" tickFormatter={diaCurto} tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} minTickGap={12} />
+                    <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={44} />
+                    <Tooltip content={<Dica sufixo="Dia" />} cursor={{ stroke: 'var(--eixo)' }} />
+                    <Area isAnimationActive={false} type="monotone" dataKey="recebidas" name="Recebidas" stroke="var(--serie-1)" fill="url(#gRec)" strokeWidth={2}>
+                      <LabelList dataKey="recebidas" position="top" style={ROTULO} formatter={(v) => (v ? numero(v) : '')} />
+                    </Area>
+                    <Area isAnimationActive={false} type="monotone" dataKey="lancadas" name="Lançadas" stroke="var(--status-bom)" fill="url(#gLan)" strokeWidth={2} />
+                    <Area isAnimationActive={false} type="monotone" dataKey="pendentes" name="Ainda pendentes" stroke="var(--status-critico)" fill="none" strokeWidth={2} strokeDasharray="4 3" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Cartao>
+
+              <Cartao titulo="Há quanto tempo esperam" sub="clique para filtrar a lista">
+                <ResponsiveContainer width="100%" height={230}>
+                  <BarChart data={dados.aging} layout="vertical" margin={{ left: 8, right: 44, top: 6 }}>
+                    <CartesianGrid horizontal={false} stroke="var(--grade)" />
+                    <XAxis type="number" allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="rotulo" tick={eixo} axisLine={false} tickLine={false} width={104} />
+                    <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
+                      <div className="tooltip-grafico"><div className="t">{payload[0].payload.rotulo}</div>
+                        <div><strong>{numero(payload[0].payload.qtd)}</strong> nota(s) · {brl(payload[0].payload.valor)}</div>
+                        <div className="muted pequeno">Clique para filtrar</div>
+                      </div>
+                    ) : null)} />
+                    <Bar isAnimationActive={false} dataKey="qtd" name="Notas" radius={[0, 4, 4, 0]} maxBarSize={26}
+                      style={{ cursor: 'pointer' }} onClick={(e) => setFiltro('faixa', (e.payload ?? e).id === f.faixa ? '' : (e.payload ?? e).id)}>
+                      {dados.aging.map((x, i) => <Cell key={x.id} fill={COR_FAIXA[i]} fillOpacity={!f.faixa || f.faixa === x.id ? 1 : 0.35} />)}
+                      <LabelList dataKey="qtd" position="right" style={ROTULO} formatter={(v) => (v ? numero(v) : '')} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </Cartao>
+            </div>
+
+            <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr)' }}>
+              <Cartao titulo="Pendentes por empresa" sub="clique para filtrar" semPadding>
+                <div style={{ padding: 12 }}>
+                  {dados.por_empresa.map((x) => {
+                    const max = Math.max(...dados.por_empresa.map((y) => y.qtd), 1);
+                    const ativo = f.empresa === x.chave;
+                    return (
+                      <button key={x.chave} className="linha entre" onClick={() => setFiltro('empresa', ativo ? '' : x.chave)}
+                        style={{ width: '100%', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', opacity: !f.empresa || ativo ? 1 : 0.5 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="linha entre pequeno"><span className="truncar"><code className="muted">{codigoEmpresa(x.chave)}</code> {x.rotulo}</span><strong>{numero(x.qtd)}</strong></div>
+                          <div className="barra-progresso"><div style={{ width: `${(x.qtd / max) * 100}%`, background: ativo ? 'var(--status-critico)' : 'var(--serie-1)' }} /></div>
+                          <div className="muted pequeno">{brl(x.valor)}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {!dados.por_empresa.length && <div className="muted pequeno">Nada pendente no período.</div>}
+                </div>
+              </Cartao>
+
+              <Cartao titulo="Por documento" sub="pendentes" semPadding>
+                <div style={{ padding: 12 }}>
+                  {dados.por_especie.map((x) => (
+                    <button key={x.chave} className="linha entre" onClick={() => setFiltro('especie', f.especie === x.chave ? '' : x.chave)}
+                      style={{ width: '100%', background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', opacity: !f.especie || f.especie === x.chave ? 1 : 0.5 }}>
+                      <span className="tag azul">{x.rotulo}</span>
+                      <span><strong>{numero(x.qtd)}</strong> <span className="muted pequeno">{brlCurto(x.valor)}</span></span>
+                    </button>
+                  ))}
+                </div>
+              </Cartao>
+
+              <Cartao titulo="Fornecedores com mais pendências" semPadding>
+                <div className="tabela-wrap" style={{ maxHeight: 260 }}>
+                  <table className="tabela">
+                    <thead><tr><th>Fornecedor</th><th className="num">Notas</th><th className="num">Valor</th></tr></thead>
+                    <tbody>
+                      {dados.por_fornecedor.map((x) => (
+                        <tr key={x.chave} className="clicavel" onClick={() => { setBusca(x.rotulo); setFiltro('fornecedor', x.rotulo); }}>
+                          <td className="pequeno">{x.rotulo}</td>
+                          <td className="num">{numero(x.qtd)}</td>
+                          <td className="num">{brl(x.valor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Cartao>
+            </div>
+          </>
+        )}
+
+        <Cartao semPadding>
+          <div className="linha" style={{ padding: 12, borderBottom: '1px solid var(--borda)', gap: 10, flexWrap: 'wrap' }}>
+            <form onSubmit={(e) => { e.preventDefault(); setFiltro('fornecedor', busca); }}>
+              <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor ou CNPJ" style={{ width: 240 }} />
+            </form>
+            <label className="linha pequeno" style={{ gap: 6 }} title="A base do Senior também recebe XMLs entre terceiros, que não são pendência do grupo">
+              <input type="checkbox" checked={f.incluir_terceiros === '1'} onChange={(e) => setFiltro('incluir_terceiros', e.target.checked ? '1' : '')} />Incluir XMLs de terceiros{k?.fora_do_grupo ? ` (${numero(k.fora_do_grupo)})` : ''}
+            </label>
+            {(f.empresa || f.especie || f.faixa || f.fornecedor) && (
+              <button className="btn pequeno ghost" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes }); }}>Limpar filtros</button>
+            )}
+            <span className="espaco" />
+            <span className="muted pequeno">{numero(itens.length)} nota(s){dados ? ` · ${brl(itens.reduce((s, l) => s + (l.valor ?? 0), 0))}` : ''}</span>
+            <BotaoExportar titulo="Pendentes de lançamento" linhas={itens} colunas={COLUNAS_EXPORT} />
+          </div>
+          {carregando && !dados ? <Carregando /> : !itens.length ? (
+            <div className="vazio" style={{ padding: 40 }}><div style={{ fontSize: 26 }}>✓</div>Nenhuma nota nesta visão.</div>
+          ) : (
+            <div className="tabela-wrap">
+              <table className="tabela">
+                <thead><tr><th>Espera</th><th>Documento</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
+                <tbody>
+                  {itens.slice(0, 500).map((l) => (
+                    <tr key={l.chave}>
+                      <td className="nowrap">
+                        <span className={`badge ${l.dias_parada > 10 ? 'sev-erro' : l.dias_parada > 5 ? 'sev-alerta' : 'sev-na'}`}>
+                          {l.dias_parada === 0 ? 'hoje' : `${l.dias_parada} dia${l.dias_parada > 1 ? 's' : ''}`}
+                        </span>
+                        <div className="muted pequeno">recebida {data(l.recebido_em)}</div>
+                      </td>
+                      <td className="nowrap"><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong><div className="muted pequeno">emitida {data(l.emissao)}</div></td>
+                      <td style={{ maxWidth: 230 }}>{l.fornecedor ?? <span className="muted">não cadastrado</span>}<div className="muted pequeno">{fmtCnpj(l.cnpj_fornecedor)}</div></td>
+                      <td className="pequeno">{l.empresa}{l.empresa_do_grupo ? <div className="muted">Emp {l.codemp}/{l.codfil}{l.uf ? ` · ${l.uf}` : ''}</div> : <div className="muted">{fmtCnpj(l.cnpj_destinatario)}</div>}</td>
+                      <td className="num"><strong>{brl(l.valor)}</strong></td>
+                      <td className="nowrap">
+                        {l.situacao === 'processada' ? <><span className="badge sev-ok">Processada</span><div className="muted pequeno">{data(l.entrada.data)} · NF {l.entrada.numero}</div></>
+                          : l.situacao === 'inconsistente' ? <><span className="badge sev-erro">Inconsistente</span><div className="muted pequeno">{l.cancelada ? `cancelada na SEFAZ · ${data(l.cancelada_em)}` : !l.empresa_do_grupo ? 'destinatário fora do grupo' : 'valor zerado'}</div></>
+                            : l.situacao === 'incompleta' ? <><span className="badge sev-alerta">Incompleta</span><div className="muted pequeno">{!l.fornecedor_cadastrado ? 'fornecedor não cadastrado' : 'XML sem itens'}</div></>
+                              : <><span className="badge sev-conferencia">Pendente</span>{l.tipo_movimento === 'saida' && <div className="muted pequeno">saída do grupo</div>}</>}
+                      </td>
+                      <td className="mono pequeno" title={l.chave}>{l.chave?.slice(-12)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {itens.length > 500 && <div className="paginacao"><span>Exibindo 500 de {numero(itens.length)} — use os filtros ou exporte para Excel</span></div>}
+            </div>
+          )}
+        </Cartao>
+    </>
+  );
+}
