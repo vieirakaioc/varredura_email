@@ -79,6 +79,12 @@ rotasErpAdmin.get('/lancamentos', permitir('ver'), async (req, res) => {
   try { res.json(await painelLancamentos(req.query)); } catch (e) { erroSenior(res, e); }
 });
 
+rotasErpAdmin.put('/lancamentos/metas', permitir('administrar'), async (req, res) => {
+  const { salvarMetas } = await import('../erp/lancamentos.js');
+  const r = salvarMetas(req.body ?? {});
+  auditar(req.usuario.id, 'lancamentos.metas', 'meta', null, req.body, req.ip);
+  res.json(r);
+});
 rotasErpAdmin.get('/entradas/transacoes', permitir('ver'), async (req, res) => {
   const { resumoTransacoes } = await import('../erp/entradas.js');
   try { res.json(await resumoTransacoes()); } catch (e) { erroSenior(res, e); }

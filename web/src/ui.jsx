@@ -324,7 +324,12 @@ export function useDados(fn, deps = [], { automatico = true, memoria = null } = 
     const h = setInterval(atualizar, ATUALIZAR_A_CADA_MS);
     return () => { window.removeEventListener('dados-alterados', atualizar); document.removeEventListener('visibilitychange', atualizar); clearInterval(h); };
   }, []);
-  return { ...estado, recarregar: () => { forcar.current = true; setN((x) => x + 1); } };
+  return {
+    ...estado,
+    recarregar: () => { forcar.current = true; setN((x) => x + 1); },
+    // relê pela API sem furar o cache do servidor (ex.: depois de salvar uma configuração local)
+    atualizar: () => setN((x) => x + 1),
+  };
 }
 
 export function Erro({ erro }) {
