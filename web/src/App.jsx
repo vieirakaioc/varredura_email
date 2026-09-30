@@ -46,6 +46,8 @@ const MENU = [
 function Layout({ children }) {
   const { usuario, permissoes, sair } = useAuth();
   const [pendentes, setPendentes] = useState(null);
+  const [saude, setSaude] = useState(null);
+  useEffect(() => { api.get('/saude').then(setSaude).catch(() => {}); }, []);
   useEffect(() => {
     // Contador do menu = notas a lançar no Senior (ou pendências gerais, sem Senior)
     const carregar = () => api.get('/dashboard').then((d) => setPendentes(d.indicadores.nao_lancadas_senior || d.indicadores.aguardando_acao)).catch(() => {});
@@ -75,6 +77,7 @@ function Layout({ children }) {
           <div className="usuario">{usuario.nome}</div>
           <div>{PERFIS[usuario.perfil]}</div>
           <button className="btn pequeno claro" onClick={sair}><Icone nome="sair" tam={14} />Sair</button>
+          {saude?.versao && <div style={{ opacity: 0.6, fontSize: 11, marginTop: 6 }} title={`Servidor iniciado em ${saude.iniciado_em}`}>versão {saude.versao}{saude.branch ? ` · ${saude.branch}` : ''}</div>}
         </div>
       </aside>
       <main className="conteudo">{children}</main>

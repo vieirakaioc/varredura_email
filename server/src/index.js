@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import { config, paths } from './config.js';
+import { config, paths, ROOT_DIR } from './config.js';
 import { get, insert, run } from './db/index.js';
 import { autenticar, hashSenha } from './auth.js';
 import { log } from './util/log.js';
@@ -43,7 +43,21 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/api/saude', (req, res) => res.json({ ok: true, ia: config.ia.habilitada }));
+// Versão em execução (commit do git no momento em que o servidor subiu): mostra se a atualização entrou mesmo
+const versao = (() => {
+  try {
+    const git = path.join(ROOT_DIR, '.git');
+    const head = fs.readFileSync(path.join(git, 'HEAD'), 'utf8').trim();
+    if (!head.startsWith('ref: ')) return { commit: head.slice(0, 7), branch: null };
+    const ref = head.slice(5);
+    let commit = null;
+    if (fs.existsSync(path.join(git, ref))) commit = fs.readFileSync(path.join(git, ref), 'utf8').trim();
+    else commit = fs.readFileSync(path.join(git, 'packed-refs'), 'utf8').split('\n').find((l) => l.endsWith(` ${ref}`))?.split(' ')[0] ?? null;
+    return { commit: commit?.slice(0, 7) ?? null, branch: ref.replace('refs/heads/', '') };
+  } catch { return { commit: null, branch: null }; }
+})();
+const iniciadoEm = new Date().toLocaleString('sv-SE');
+app.get('/api/saude', (req, res) => res.json({ ok: true, ia: config.ia.habilitada, versao: versao.commit, branch: versao.branch, iniciado_em: iniciadoEm }));
 app.use('/api', rotasAuthPublicas, rotasOauthPublicas);
 app.use('/api/erp/v1', rotasErpApi);
 app.use('/api', autenticar, rotasAuth, rotasDashboard, rotasDocumentos, rotasEmails, rotasCadastros, rotasRelatorios, rotasFinanceiro, rotasErpAdmin, rotasSefaz);
