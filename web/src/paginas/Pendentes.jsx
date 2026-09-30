@@ -22,6 +22,21 @@ const MESES_FILTRO = Array.from({ length: 12 }, (_, i) => {
   return { valor: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, rotulo: `${NOMES_MES[d.getMonth()]}/${d.getFullYear()}` };
 });
 
+// Cartões de ranking mostram os 5 primeiros; "Ver todas" abre o resto e o Excel leva a lista inteira
+const TOP = 5;
+const COLUNAS_EMPRESA = [
+  { titulo: 'Emp/Fil', valor: (x) => codigoEmpresa(x.chave) },
+  { titulo: 'Empresa', valor: (x) => x.rotulo },
+  { titulo: 'Notas pendentes', tipo: 'numero', valor: (x) => x.qtd },
+  { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor },
+];
+const COLUNAS_FORNECEDOR = [
+  { titulo: 'Fornecedor', valor: (x) => x.rotulo },
+  { titulo: 'CNPJ', valor: (x) => fmtCnpj(x.chave) },
+  { titulo: 'Notas pendentes', tipo: 'numero', valor: (x) => x.qtd },
+  { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor },
+];
+
 const COLUNAS_EXPORT = [
   { titulo: 'Recebida em', tipo: 'data', valor: (l) => l.recebido_em },
   { titulo: 'Dias parada', tipo: 'numero', valor: (l) => l.dias_parada },
@@ -104,6 +119,8 @@ function PainelPendentes() {
   };
   const [busca, setBusca] = useState(f.fornecedor);
   const [mostrar, setMostrar] = useState(500);
+  const [verTodasEmpresas, setVerTodasEmpresas] = useState(false);
+  const [verTodosFornecedores, setVerTodosFornecedores] = useState(false);
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ ...f, [k]: v }).filter(([, x]) => x !== '' && x != null)));
   const { dados, erro, carregando, recarregar } = useDados(
     ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros })}`),
@@ -260,9 +277,10 @@ function PainelPendentes() {
             </div>
 
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr)' }}>
-              <Cartao titulo="Pendentes por empresa" sub={f.empresa ? 'clique de novo para ver todas' : 'clique para filtrar'} semPadding>
+              <Cartao titulo="Pendentes por empresa" sub={f.empresa ? 'clique de novo para ver todas' : `top ${TOP} · clique para filtrar`} semPadding
+                acoes={<BotaoExportar titulo="Pendentes por empresa" linhas={dados.por_empresa} colunas={COLUNAS_EMPRESA} />}>
                 <div style={{ padding: 12 }}>
-                  {dados.por_empresa.map((x) => {
+                  {dados.por_empresa.filter((x, i) => verTodasEmpresas || i < TOP || x.chave === f.empresa).map((x) => {
                     const max = Math.max(...dados.por_empresa.map((y) => y.qtd), 1);
                     const ativo = f.empresa === x.chave;
                     return (
@@ -277,6 +295,11 @@ function PainelPendentes() {
                     );
                   })}
                   {!dados.por_empresa.length && <div className="muted pequeno">Nada pendente no período.</div>}
+                  {dados.por_empresa.length > TOP && (
+                    <button className="btn pequeno ghost" style={{ marginTop: 6 }} onClick={() => setVerTodasEmpresas((v) => !v)}>
+                      {verTodasEmpresas ? `Mostrar só as ${TOP} primeiras` : `Ver todas (${numero(dados.por_empresa.length)})`}
+                    </button>
+                  )}
                 </div>
               </Cartao>
 
@@ -292,16 +315,15 @@ function PainelPendentes() {
                 </div>
               </Cartao>
 
-              <Cartao className="preenche" titulo="Fornecedores com mais pendências" sub={`${dados.por_fornecedor.length} · clique para filtrar`} semPadding>
-                {/* ocupa a altura da linha (definida pelos cartões ao lado) e rola por dentro */}
-                <div style={{ position: 'relative', flex: 1, minHeight: 260 }}>
-                <div className="tabela-wrap" style={{ position: 'absolute', inset: 0, maxHeight: 'none' }}>
+              <Cartao titulo="Fornecedores com mais pendências" sub={`top ${TOP}`} semPadding
+                acoes={<BotaoExportar titulo="Fornecedores com mais pendências" linhas={dados.por_fornecedor} colunas={COLUNAS_FORNECEDOR} />}>
+                <div className="tabela-wrap" style={{ maxHeight: verTodosFornecedores ? 420 : 'none' }}>
                   <table className="tabela">
                     <thead><tr><th>Fornecedor</th><th className="num">Notas</th><th className="num">Valor</th></tr></thead>
                     <tbody>
-                      {dados.por_fornecedor.map((x) => (
-                        <tr key={x.chave} className="clicavel" onClick={() => { setBusca(x.rotulo); setFiltro('fornecedor', x.rotulo); }}>
-                          <td className="pequeno">{x.rotulo}</td>
+                      {dados.por_fornecedor.filter((x, i) => verTodosFornecedores || i < TOP).map((x) => (
+                        <tr key={x.chave} className="clicavel" title={`CNPJ ${fmtCnpj(x.chave)}`} onClick={() => { setBusca(x.rotulo); setFiltro('fornecedor', x.rotulo); }}>
+                          <td style={{ maxWidth: 280 }}><div className="truncar">{x.rotulo}</div></td>
                           <td className="num">{numero(x.qtd)}</td>
                           <td className="num">{brl(x.valor)}</td>
                         </tr>
@@ -309,7 +331,13 @@ function PainelPendentes() {
                     </tbody>
                   </table>
                 </div>
-                </div>
+                {dados.por_fornecedor.length > TOP && (
+                  <div style={{ padding: '6px 10px' }}>
+                    <button className="btn pequeno ghost" onClick={() => setVerTodosFornecedores((v) => !v)}>
+                      {verTodosFornecedores ? `Mostrar só os ${TOP} primeiros` : `Ver os ${numero(dados.por_fornecedor.length)} com mais pendências`}
+                    </button>
+                  </div>
+                )}
               </Cartao>
             </div>
           </>
