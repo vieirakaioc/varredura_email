@@ -18,6 +18,14 @@ if (Test-Path data) {
 Passo "2/6 Baixando o código ($Branch)"
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch falhou (sem acesso ao GitHub?)' }
+# Arquivos do projeto alterados neste computador impediriam o pull: guarda de lado (git stash), sem apagar
+$alterados = git status --porcelain --untracked-files=no
+if ($alterados) {
+  Write-Host 'Arquivos alterados neste computador (guardados com git stash; recupere com "git stash pop" se precisar):' -ForegroundColor Yellow
+  $alterados | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+  git stash push -m "atualizar.ps1 $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+  if ($LASTEXITCODE -ne 0) { throw 'git stash falhou' }
+}
 git checkout $Branch
 if ($LASTEXITCODE -ne 0) { throw "git checkout $Branch falhou: há arquivos alterados nesta pasta? Rode 'git status' e me mande o resultado." }
 git pull origin $Branch
