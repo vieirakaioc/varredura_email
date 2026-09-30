@@ -25,6 +25,8 @@ function classificar(i) {
   return 'pendente';
 }
 const LIMITE_ITENS = 20000;
+// Notas não lançadas aparecem sempre, qualquer que seja o período escolhido, até esta idade
+const DIAS_ABERTAS = 365;
 const SITUACOES = { pendente: 'Pendente', inconsistente: 'Inconsistente', incompleta: 'Incompleta', processada: 'Processada' };
 
 // OUTER APPLY (TOP 1) em vez de LEFT JOIN: o mesmo CNPJ pode ter vários fornecedores/filiais no Senior e a
@@ -48,8 +50,10 @@ const SQL = `SELECT x.CHVNEL, x.NUMNFC, x.CODSNF, x.TIPNFE, x.TIPOPE, x.DATEMI, 
     WHERE fe.NUMCGC = x.CGCFOR ORDER BY fe.CODEMP, fe.CODFIL) fe
   OUTER APPLY (SELECT TOP 1 fo.CODFOR, fo.NOMFOR FROM E095FOR fo WHERE fo.CGCCPF = x.CGCFOR ORDER BY fo.CODFOR) fo
   OUTER APPLY (SELECT TOP 1 fd.NOMFOR FROM E095FOR fd WHERE fd.CGCCPF = x.CGCFIL ORDER BY fd.CODFOR) fd
-  -- Período pela emissão OU pelo recebimento: nota emitida antes do período e recebida dentro dele também entra
-  WHERE ((x.DATEMI >= @desde AND x.DATEMI <= @ate) OR (x.DATENT >= @desde AND x.DATENT <= @ate)){somenteAbertas}`;
+  -- Período pela emissão OU pelo recebimento: nota emitida antes do período e recebida dentro dele também entra.
+  -- As ainda não lançadas entram sempre (desde @abertasDesde), como na tela do Senior: o período limita só as lançadas.
+  WHERE (((x.DATEMI >= @desde AND x.DATEMI <= @ate) OR (x.DATENT >= @desde AND x.DATENT <= @ate))
+      OR (x.DATEMI >= @abertasDesde AND NOT EXISTS (SELECT 1 FROM E440NFC n3 WHERE n3.CHVNEL = x.CHVNEL AND n3.SITNFC <> '3'))){somenteAbertas}`;
 
 // Modelo do documento pela chave de acesso (posições 21-22), usado enquanto a nota não tem série no Senior
 const MODELOS = { 55: 'NF-e', 57: 'CT-e', 65: 'NFC-e', 58: 'MDF-e', 59: 'SAT', 67: 'CT-e OS' };
@@ -147,9 +151,9 @@ export async function painelPendentes(filtros = {}) {
   // A chave usa o filtro pedido, não as datas calculadas: "últimos 60 dias" vira um Date diferente
   // a cada chamada e o cache nunca seria aproveitado.
   const linhas = await comCache(
-    `pendentes2|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
+    `pendentes3|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
     filtros.forcar === '1' ? 0 : 60_000,
-    () => consultar(sql, de, { ate }),
+    () => consultar(sql, de, { ate, abertasDesde: new Date(Date.now() - DIAS_ABERTAS * 86400000) }),
   );
 
   // Chaves canceladas já conhecidas (SEFAZ ou registro de saída do Senior)
@@ -272,7 +276,7 @@ export async function diagnosticarPendentes(busca) {
   if (dig.length !== 44 && dig.length !== 14 && dig.length !== 11) throw new Error('Informe a chave de acesso (44 dígitos) ou um CNPJ/CPF');
   const filtro = dig.length === 44 ? 'x.CHVNEL = @busca' : '(x.CGCFIL = CAST(@num AS NUMERIC(14,0)) OR x.CGCFOR = CAST(@num AS NUMERIC(14,0)))';
   const sql = SQL.replace('SELECT x.CHVNEL', 'SELECT TOP 300 x.CHVNEL, x.TIPOPE AS TIPOPE_BRUTO')
-    .replace(/WHERE \(\(x\.DATEMI[\s\S]*\{somenteAbertas\}/, `WHERE ${filtro} ORDER BY x.DATEMI DESC`);
+    .replace(/WHERE \(\(\(x\.DATEMI[\s\S]*\{somenteAbertas\}/, `WHERE ${filtro} ORDER BY x.DATEMI DESC`);
   const extras = dig.length === 44 ? { busca: dig } : { num: dig };
   const [linhas, filiais] = await Promise.all([
     consultar(sql, null, extras),

@@ -196,7 +196,7 @@ function PainelPendentes() {
             <div className="muted pequeno">
               {dados.tudo_aberto
                 ? <>Fonte: <strong>todos</strong> os XMLs do recebimento do Senior que ainda não viraram nota de entrada, sem limite de data (a consulta já exclui as lançadas, por isso os cartões de “lançadas” não aparecem). </>
-                : <>Fonte: XMLs recebidos no Senior entre {data(dados.periodo.de)} e {data(dados.periodo.ate)}. </>}
+                : <>Fonte: XMLs recebidos no Senior entre {data(dados.periodo.de)} e {data(dados.periodo.ate)}, mais <strong>todos os ainda não lançados</strong> dos últimos 12 meses (para mais antigos, use “Tudo em aberto”). </>}
               Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
             </div>
 
