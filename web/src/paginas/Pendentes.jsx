@@ -55,6 +55,8 @@ const COLUNAS_EXPORT = [
   { titulo: 'Tipo', valor: (l) => (l.tipo_movimento === 'saida' ? 'Saída' : l.entrada_propria ? 'Entrada própria' : l.transferencia ? 'Transferência' : 'Entrada') },
   { titulo: 'Entrada no Senior', tipo: 'data', valor: (l) => l.entrada?.data },
   { titulo: 'Observação do XML', valor: (l) => l.observacao },
+  { titulo: 'Produto (1º item)', valor: (l) => l.produto },
+  { titulo: 'Responsável', valor: (l) => (l.responsavel === 'faturamento' ? 'Faturamento' : 'Escrita Fiscal') },
 ];
 
 function Dica({ active, payload, label, sufixo }) {
@@ -104,6 +106,8 @@ function PainelPendentes() {
     empresa: params.get('empresa') ?? '', especie: params.get('especie') ?? '', fornecedor: params.get('fornecedor') ?? '',
     incluir_terceiros: params.get('incluir_terceiros') ?? '', faixa: params.get('faixa') ?? '',
     tipo: params.get('tipo') ?? 'entradas',
+    // quem lança: Escrita Fiscal (padrão) ou Faturamento (bagaço, madeira, cavaco...)
+    responsavel: params.get('responsavel') ?? 'fiscal',
     situacoes: params.get('situacoes') ?? 'pendente,inconsistente,incompleta',
     sem_empresas: params.get('sem_empresas') ?? '',
   };
@@ -123,8 +127,8 @@ function PainelPendentes() {
   const [verTodosFornecedores, setVerTodosFornecedores] = useState(false);
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ ...f, [k]: v }).filter(([, x]) => x !== '' && x != null)));
   const { dados, erro, carregando, recarregar } = useDados(
-    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros })}`),
-    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros], { automatico: false, memoria: 'pendentes' },
+    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel })}`),
+    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel], { automatico: false, memoria: 'pendentes' },
   );
   const k = dados?.indicadores;
   const itens = (dados?.itens ?? []).filter((l) => {
@@ -145,6 +149,17 @@ function PainelPendentes() {
             {[15, 30, 60, 90, 180].map((d) => <option key={d} value={d}>Últimos {d} dias</option>)}
             <option value="tudo">Tudo em aberto (sem limite de data)</option>
           </select>
+          <div className="linha pequeno" style={{ gap: 8 }} title="Notas de bagaço, madeira, cavaco etc. são lançadas pelo Faturamento">
+            <strong className="muted">Responsável:</strong>
+            {[['fiscal', 'Escrita Fiscal'], ['faturamento', 'Faturamento'], ['todos', 'Todos']].map(([v, r]) => {
+              const qtd = v === 'todos' ? null : dados?.por_responsavel?.find((x) => x.chave === v)?.qtd;
+              return (
+                <label key={v} className="linha" style={{ gap: 4 }}>
+                  <input type="radio" name="responsavel" checked={f.responsavel === v} onChange={() => setFiltro('responsavel', v)} />{r}{qtd != null ? ` (${numero(qtd)})` : ''}
+                </label>
+              );
+            })}
+          </div>
           {/* mesmos filtros da tela do Senior: tipo e situação */}
           <div className="linha pequeno" style={{ gap: 8 }}>
             <strong className="muted">Tipo:</strong>
@@ -196,6 +211,9 @@ function PainelPendentes() {
         </details>
       </Cartao>
       <Erro erro={erro} />
+      {dados && !dados.responsavel_identificado && (
+        <div className="aviso atencao pequeno">Não encontrei no Senior a coluna de descrição dos itens do XML (tabela E000IPC): as notas do Faturamento (bagaço, madeira, cavaco) não estão sendo separadas. Abra o Diagnóstico e me envie a lista de colunas.</div>
+      )}
         {carregando && !dados ? <Carregando /> : k && (
           <>
             <div className="grade grade-kpi monetario">
@@ -225,7 +243,7 @@ function PainelPendentes() {
                 {f.especie && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('especie', '')}>Documento: <strong>{f.especie}</strong> ✕</button>}
                 {f.faixa && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('faixa', '')}>Espera: <strong>{dados.aging.find((x) => x.id === f.faixa)?.rotulo ?? f.faixa}</strong> ✕</button>}
                 {f.fornecedor && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => { setBusca(''); setFiltro('fornecedor', ''); }}>Fornecedor: <strong>{f.fornecedor}</strong> ✕</button>}
-                <button className="btn pequeno" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes, ...(f.sem_empresas ? { sem_empresas: f.sem_empresas } : {}), ...(f.mes ? { mes: f.mes } : {}) }); }}>Limpar filtros</button>
+                <button className="btn pequeno" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes, responsavel: f.responsavel, ...(f.sem_empresas ? { sem_empresas: f.sem_empresas } : {}), ...(f.mes ? { mes: f.mes } : {}) }); }}>Limpar filtros</button>
                 {carregando && <span className="muted">atualizando…</span>}
               </div>
             )}
@@ -354,7 +372,7 @@ function PainelPendentes() {
               <input type="checkbox" checked={f.incluir_terceiros === '1'} onChange={(e) => setFiltro('incluir_terceiros', e.target.checked ? '1' : '')} />Incluir XMLs de terceiros{k?.fora_do_grupo ? ` (${numero(k.fora_do_grupo)})` : ''}
             </label>
             {(f.empresa || f.especie || f.faixa || f.fornecedor) && (
-              <button className="btn pequeno ghost" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes }); }}>Limpar filtros</button>
+              <button className="btn pequeno ghost" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes, responsavel: f.responsavel }); }}>Limpar filtros</button>
             )}
             <span className="espaco" />
             <span className="muted pequeno">{numero(itens.length)} nota(s){dados ? ` · ${brl(itens.reduce((s, l) => s + (l.valor ?? 0), 0))}` : ''}</span>
@@ -365,7 +383,7 @@ function PainelPendentes() {
           ) : (
             <div className="tabela-wrap">
               <table className="tabela">
-                <thead><tr><th>Espera</th><th>Recebida</th><th>Documento</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
+                <thead><tr><th>Espera</th><th>Recebida</th><th>Documento</th><th>Produto</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
                 <tbody>
                   {itens.slice(0, mostrar).map((l) => {
                     // motivo da situação: vai ao lado do selo, na mesma linha
@@ -383,6 +401,10 @@ function PainelPendentes() {
                         </td>
                         <td className="nowrap muted">{data(l.recebido_em)}</td>
                         <td className="nowrap" title={`emitida em ${data(l.emissao)}`}><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong></td>
+                        <td style={{ maxWidth: 200 }} title={l.produto ?? ''}>
+                          <div className="truncar">{l.produto ?? <span className="muted">—</span>}</div>
+                          {l.responsavel === 'faturamento' && f.responsavel !== 'faturamento' && <span className="tag" style={{ marginTop: 2 }}>Faturamento</span>}
+                        </td>
                         <td style={{ maxWidth: 300 }}>
                           <div className="truncar" title={l.fornecedor ?? ''}>{l.fornecedor ?? <span className="muted">não cadastrado</span>}</div>
                           <div className="muted pequeno mono">{fmtCnpj(l.cnpj_fornecedor)}</div>
@@ -433,17 +455,19 @@ function Diagnostico() {
       <Erro erro={erro} />
       {res && (
         <div style={{ marginTop: 10 }}>
+          {res.colunas_produto && <div className="muted pequeno">Itens do XML (E000IPC): descrição em <code>{res.colunas_produto.descricao ?? 'não encontrada'}</code>, NCM em <code>{res.colunas_produto.ncm ?? 'não encontrado'}</code>{!res.colunas_produto.descricao && res.colunas_produto.disponiveis?.length ? <> · colunas: {res.colunas_produto.disponiveis.join(', ')}</> : null}</div>}
           {res.filiais_com_este_cnpj.length > 0 && <div className="pequeno">Filiais do Senior com este CNPJ: {res.filiais_com_este_cnpj.map((f) => `${f.codemp}/${f.codfil} ${f.nome}`).join(', ')}</div>}
           <div className="muted pequeno">{numero(res.notas.length)} XML(s) no recebimento do Senior (últimos 300, sem limite de data) · {numero(res.notas.filter((n) => !n.aparece_na_lista_padrao).length)} fora da lista padrão</div>
           <div className="tabela-wrap" style={{ maxHeight: 360 }}>
             <table className="tabela">
-              <thead><tr><th>Nota</th><th>Emitente → Destinatário</th><th>tpNF</th><th>Situação</th><th>Por que não aparece</th></tr></thead>
+              <thead><tr><th>Nota</th><th>Emitente → Destinatário</th><th>Produto</th><th>tpNF</th><th>Situação</th><th>Por que não aparece</th></tr></thead>
               <tbody>
                 {notas.map((n) => (
                   <tr key={n.chave}>
                     <td className="nowrap"><strong>{n.numero}</strong><div className="muted pequeno">emitida {data(n.emissao)} · {brl(n.valor)}</div><div className="mono pequeno" title={n.chave}>{n.chave?.slice(-12)}</div></td>
                     <td className="pequeno">{n.emitente ?? fmtCnpj(n.cnpj_emitente)}<div className="muted">→ {n.empresa} ({fmtCnpj(n.cnpj_destinatario)})</div>
                       {n.entrada_propria && <div className="muted">entrada própria</div>}{n.transferencia && <div className="muted">transferência</div>}{n.emitida_pelo_grupo && !n.entrada_propria && !n.transferencia && <div className="muted">emitida pelo grupo</div>}</td>
+                    <td className="pequeno" style={{ maxWidth: 200 }}><div className="truncar" title={n.produto ?? ''}>{n.produto ?? '—'}</div>{n.responsavel === 'faturamento' && <span className="tag">Faturamento</span>}</td>
                     <td className="pequeno">{String(n.tipope_no_xml ?? '—')}</td>
                     <td className="pequeno">{n.situacao}</td>
                     <td className="pequeno">{n.motivos.length ? n.motivos.join('; ') : <span className="muted">aparece (confira o período e os filtros)</span>}</td>

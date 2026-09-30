@@ -3,7 +3,7 @@
 //
 // "Pendente" = o XML está no recebimento e não existe entrada com a mesma chave de acesso.
 // Cancelamentos conhecidos (SEFAZ / saída do Senior) são destacados: não devem ser lançados.
-import { all } from '../db/index.js';
+import { all, getConfig } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { comCache } from './cache.js';
 
@@ -39,8 +39,8 @@ const SQL = `SELECT x.CHVNEL, x.NUMNFC, x.CODSNF, x.TIPNFE, x.TIPOPE, x.DATEMI, 
     x.CGCFOR, x.CGCFIL, fi.CODEMP, fi.CODFIL, fi.NOMFIL, fi.SIGFIL, fi.SIGUFS, fd.NOMFOR AS NOME_DESTINO,
     fe.CODEMP AS EMIT_CODEMP, fe.CODFIL AS EMIT_CODFIL, fe.NOMFIL AS EMIT_NOMFIL, fe.SIGFIL AS EMIT_SIGFIL, fe.SIGUFS AS EMIT_SIGUFS,
     n.NUMNFC AS ENTRADA_NUM, n.CODSNF AS ENTRADA_SERIE, n.DATENT AS ENTRADA_DATA, n.SITNFC AS ENTRADA_SITUACAO,
-    sa.NUMNFV AS SAIDA_NUM
-  FROM E000NFC x
+    sa.NUMNFV AS SAIDA_NUM{colunasResponsavel}
+  FROM E000NFC x{aplicaProduto}
   OUTER APPLY (SELECT TOP 1 n.NUMNFC, n.CODSNF, n.DATENT, n.SITNFC FROM E440NFC n
     WHERE n.CHVNEL = x.CHVNEL AND n.SITNFC <> '3' ORDER BY n.DATENT DESC) n
   OUTER APPLY (SELECT TOP 1 sa.NUMNFV FROM E140IDE sa WHERE sa.CHVDOE = x.CHVNEL) sa
@@ -54,6 +54,52 @@ const SQL = `SELECT x.CHVNEL, x.NUMNFC, x.CODSNF, x.TIPNFE, x.TIPOPE, x.DATEMI, 
   -- As ainda não lançadas entram sempre (desde @abertasDesde), como na tela do Senior: o período limita só as lançadas.
   WHERE (((x.DATEMI >= @desde AND x.DATEMI <= @ate) OR (x.DATENT >= @desde AND x.DATENT <= @ate))
       OR (x.DATEMI >= @abertasDesde AND NOT EXISTS (SELECT 1 FROM E440NFC n3 WHERE n3.CHVNEL = x.CHVNEL AND n3.SITNFC <> '3'))){somenteAbertas}`;
+
+// ------------------------------------------------------------------ responsável pelo lançamento
+// Notas de bagaço, madeira, cavaco etc. são lançadas pelo time de Faturamento, não pela Escrita Fiscal.
+// Reconhecidas pelos itens do XML no Senior (E000IPC): descrição do produto e/ou NCM.
+const RESPONSAVEIS = { fiscal: 'Escrita Fiscal', faturamento: 'Faturamento' };
+const REGRA_FATURAMENTO_PADRAO = {
+  // padrões LIKE sobre a descrição em maiúsculas ("_" cobre Ç/Ã: BAGAÇO e BAGACO)
+  descricoes: ['%BAGA_O%', '%MADEIRA%', '%CAVACO%', '%LENHA%', '%EUCALIPTO%', '%SERRAGEM%', '%BIOMASSA%'],
+  // NCM: 2303 bagaço de cana; 4401 lenha/cavaco/serragem; 4403 madeira em bruto; 4404 e 4407 madeira
+  ncms: ['2303', '4401', '4403', '4404', '4407'],
+};
+const COLUNAS_DESCRICAO = ['DESPRO', 'CPLIPC', 'DESIPC', 'DESITE', 'XPROD', 'PRODES', 'DESNFE'];
+const COLUNAS_NCM = ['CODCLF', 'NCMPRO', 'CODNCM', 'CLAFIS', 'NCMIPC', 'NCM'];
+let colunasItemCache = { em: 0, valor: null };
+
+/** Descobre, uma vez por dia, quais colunas de descrição e NCM existem em E000IPC nesta base do Senior. */
+async function colunasItem() {
+  if (colunasItemCache.valor && Date.now() - colunasItemCache.em < 24 * 3600_000) return colunasItemCache.valor;
+  try {
+    const cols = new Set((await consultar(`SELECT UPPER(COLUMN_NAME) AS C FROM INFORMATION_SCHEMA.COLUMNS WHERE UPPER(TABLE_NAME) = 'E000IPC'`)).map((l) => l.C));
+    const valor = { descricao: COLUNAS_DESCRICAO.find((c) => cols.has(c)) ?? null, ncm: COLUNAS_NCM.find((c) => cols.has(c)) ?? null, todas: [...cols].sort() };
+    colunasItemCache = { em: Date.now(), valor };
+    return valor;
+  } catch {
+    return { descricao: null, ncm: null, todas: [] };
+  }
+}
+
+const regraFaturamento = () => ({ ...REGRA_FATURAMENTO_PADRAO, ...(getConfig('regra_faturamento', null) ?? {}) });
+const soTexto = (v) => String(v).toUpperCase().replace(/'/g, '');
+
+/** Trechos de SQL que trazem o produto principal e a marca "é do Faturamento" de cada XML. */
+function sqlResponsavel(cols) {
+  if (!cols.descricao && !cols.ncm) return { colunas: ', NULL AS PRODUTO, 0 AS FATURAMENTO', aplica: '' };
+  const regra = regraFaturamento();
+  const conds = [
+    ...(cols.descricao ? regra.descricoes.map((d) => `UPPER(ip.${cols.descricao}) LIKE '${soTexto(d)}'`) : []),
+    ...(cols.ncm ? regra.ncms.map((n) => `CAST(ip.${cols.ncm} AS varchar(20)) LIKE '${soTexto(n).replace(/\D/g, '')}%'`) : []),
+  ];
+  return {
+    colunas: `, pr.PRODUTO, CASE WHEN EXISTS (SELECT 1 FROM E000IPC ip WHERE ip.CHVNEL = x.CHVNEL AND (${conds.join(' OR ') || '1 = 0'})) THEN 1 ELSE 0 END AS FATURAMENTO`,
+    aplica: cols.descricao
+      ? `\n  OUTER APPLY (SELECT TOP 1 ip0.${cols.descricao} AS PRODUTO FROM E000IPC ip0 WHERE ip0.CHVNEL = x.CHVNEL) pr`
+      : '\n  OUTER APPLY (SELECT CAST(NULL AS varchar(1)) AS PRODUTO) pr',
+  };
+}
 
 // Série "chegada × lançamento": XMLs recebidos por dia de chegada (só destinados às filiais do grupo), quantos
 // deles ainda não viraram entrada, e entradas lançadas por dia de lançamento a partir de um XML recebido.
@@ -135,6 +181,8 @@ function montarItem(l, canceladas, dia) {
     cancelada_em: cancelada?.data_evento ?? null,
     justificativa_cancelamento: cancelada?.justificativa ?? null,
     observacao: String(l.OBSNFC ?? '').trim() || null,
+    produto: String(l.PRODUTO ?? '').trim() || null,
+    responsavel: Number(l.FATURAMENTO) === 1 ? 'faturamento' : 'fiscal',
   };
 }
 function montarItemClassificado(l, canceladas, dia) {
@@ -163,7 +211,9 @@ export async function painelPendentes(filtros = {}) {
       : filtros.de ? new Date(`${filtros.de}T00:00:00Z`) : new Date(Date.now() - (Number(filtros.dias) || 60) * 86400000);
   // Os filtros da tela são aplicados abaixo, sobre estas linhas: só o período muda a consulta,
   // então ela fica em cache por cinco minutos ("Atualizar" na tela força a leitura no banco).
-  const sql = SQL.replace('{somenteAbertas}', tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '');
+  const cols = await colunasItem();
+  const resp = sqlResponsavel(cols);
+  const sql = SQL.replace('{colunasResponsavel}', resp.colunas).replace('{aplicaProduto}', resp.aplica).replace('{somenteAbertas}', tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '');
   // A chave usa o filtro pedido, não as datas calculadas: "últimos 60 dias" vira um Date diferente
   // a cada chamada e o cache nunca seria aproveitado.
   // A série do gráfico "chegada × lançamento" é outra consulta: começa junto, sem esperar a principal
@@ -173,7 +223,7 @@ export async function painelPendentes(filtros = {}) {
     () => consultar(SQL_SERIE, new Date(`${diasSerie[0]}T00:00:00Z`), { ate: new Date(`${hojeSerie}T23:59:59Z`) }));
   serieAsync.catch(() => {}); // o erro é tratado lá embaixo
   const linhas = await comCache(
-    `pendentes3|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
+    `pendentes4|${resp.colunas.length}|${JSON.stringify(regraFaturamento())}|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
     filtros.forcar === '1' ? 0 : 300_000,
     () => consultar(sql, de, { ate, abertasDesde: new Date(Date.now() - DIAS_ABERTAS * 86400000) }),
   );
@@ -210,6 +260,12 @@ export async function painelPendentes(filtros = {}) {
   // Tipo: entradas (documentos de terceiros para nós) ou saídas (emitidos pelo grupo)
   if (filtros.tipo === 'saidas') itens = itens.filter((i) => i.tipo_movimento === 'saida');
   else if (filtros.tipo !== 'todos') itens = itens.filter((i) => i.tipo_movimento === 'entrada');
+  // Responsável: Escrita Fiscal (padrão) ou Faturamento (bagaço, madeira, cavaco...)
+  const porResponsavel = Object.entries(RESPONSAVEIS).map(([chave, rotulo]) => ({
+    chave, rotulo, qtd: itens.filter((i) => i.responsavel === chave && !i.lancada && !i.nossa_saida).length,
+  }));
+  const responsavel = filtros.responsavel === 'todos' ? null : (filtros.responsavel || 'fiscal');
+  if (responsavel) itens = itens.filter((i) => i.responsavel === responsavel);
   // Filtro de empresa (clique no cartão "Pendentes por empresa") por último: o cartão e as caixas de
   // seleção continuam mostrando todas as empresas, com a escolhida em destaque
   const pendentesTodasEmpresas = itens.filter((i) => !i.lancada && !i.nossa_saida);
@@ -280,6 +336,9 @@ export async function painelPendentes(filtros = {}) {
       nossas_saidas: nossasSaidas,       // documentos que nós emitimos (não são entrada)
     },
     por_situacao: porSituacao,
+    por_responsavel: porResponsavel, responsavel: responsavel ?? 'todos',
+    responsavel_identificado: Boolean(cols.descricao || cols.ncm),
+    colunas_produto: { descricao: cols.descricao, ncm: cols.ncm },
     serie,
     por_empresa: agrupar(pendentesTodasEmpresas, chaveEmpresa, (i) => `${i.empresa}${i.uf ? ` (${i.uf})` : ''}`),
     por_especie: agrupar(pendentes, (i) => i.especie_rotulo, (i) => i.especie_rotulo),
@@ -311,7 +370,10 @@ export async function diagnosticarPendentes(busca) {
   const dig = String(busca ?? '').replace(/\D/g, '');
   if (dig.length !== 44 && dig.length !== 14 && dig.length !== 11) throw new Error('Informe a chave de acesso (44 dígitos) ou um CNPJ/CPF');
   const filtro = dig.length === 44 ? 'x.CHVNEL = @busca' : '(x.CGCFIL = CAST(@num AS NUMERIC(14,0)) OR x.CGCFOR = CAST(@num AS NUMERIC(14,0)))';
-  const sql = SQL.replace('SELECT x.CHVNEL', 'SELECT TOP 300 x.CHVNEL, x.TIPOPE AS TIPOPE_BRUTO')
+  const cols = await colunasItem();
+  const resp = sqlResponsavel(cols);
+  const sql = SQL.replace('{colunasResponsavel}', resp.colunas).replace('{aplicaProduto}', resp.aplica)
+    .replace('SELECT x.CHVNEL', 'SELECT TOP 300 x.CHVNEL, x.TIPOPE AS TIPOPE_BRUTO')
     .replace(/WHERE \(\(\(x\.DATEMI[\s\S]*\{somenteAbertas\}/, `WHERE ${filtro} ORDER BY x.DATEMI DESC`);
   const extras = dig.length === 44 ? { busca: dig } : { num: dig };
   const [linhas, filiais] = await Promise.all([
@@ -321,17 +383,19 @@ export async function diagnosticarPendentes(busca) {
   const canceladas = new Map(all("SELECT chave, data_evento, justificativa FROM sefaz_eventos WHERE tp_evento IN ('110111','110112')").map((c) => [c.chave, c]));
   const dia = hoje();
   return {
+    colunas_produto: { descricao: cols.descricao, ncm: cols.ncm, disponiveis: cols.todas },
     filiais_com_este_cnpj: filiais.map((f) => ({ codemp: f.CODEMP, codfil: f.CODFIL, nome: String(f.SIGFIL ?? f.NOMFIL ?? '').trim() })),
     notas: linhas.map((l) => {
       const i = montarItemClassificado(l, canceladas, dia);
       const motivos = [];
       if (i.lancada) motivos.push(`já lançada no Senior (NF ${i.entrada.numero}, ${i.entrada.data ?? 'sem data'}, situação ${i.entrada.situacao})`);
       if (!i.empresa_do_grupo) motivos.push('destinatário não encontrado nas filiais do Senior (E070FIL): só aparece com "Incluir XMLs de terceiros"');
+      if (i.responsavel === 'faturamento') motivos.push(`produto do Faturamento (${i.produto ?? 'bagaço/madeira/cavaco'}): só aparece com Responsável "Faturamento" ou "Todos"`);
       if (i.nossa_saida) motivos.push('tratada como saída do grupo: só aparece com Tipo "Saídas" ou "Todos"');
       return {
         chave: i.chave, numero: i.numero, emissao: i.emissao, recebido_em: i.recebido_em, valor: i.valor,
         cnpj_emitente: i.cnpj_fornecedor, emitente: i.fornecedor, cnpj_destinatario: String(l.CGCFIL ?? ''), empresa: i.empresa,
-        tipope_no_xml: l.TIPOPE_BRUTO, emitida_pelo_grupo: l.SAIDA_NUM != null || l.EMIT_CODEMP != null,
+        tipope_no_xml: l.TIPOPE_BRUTO, produto: i.produto, responsavel: i.responsavel, emitida_pelo_grupo: l.SAIDA_NUM != null || l.EMIT_CODEMP != null,
         entrada_propria: i.entrada_propria, transferencia: i.transferencia,
         situacao: i.situacao_rotulo, aparece_na_lista_padrao: !motivos.length, motivos,
       };
