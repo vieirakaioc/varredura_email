@@ -151,7 +151,7 @@ function PainelPendentes() {
           <span className="muted pequeno">Fonte: Via Recebimento de Documento Eletrônico (Senior)</span>
         </div>
         {/* Empresas: caixas de seleção para tirar da conta as que não são acompanhadas */}
-        <details className="pequeno" style={{ marginTop: 10 }} open={empresasExcluidas.length > 0}>
+        <details className="pequeno" style={{ marginTop: 10 }}>
           <summary style={{ cursor: 'pointer' }}>
             <strong className="muted">Empresas:</strong>{' '}
             {(() => {
