@@ -307,6 +307,8 @@ function PainelPendentes() {
           </>
         )}
 
+        <Diagnostico />
+
         <Cartao semPadding>
           <div className="linha" style={{ padding: 12, borderBottom: '1px solid var(--borda)', gap: 10, flexWrap: 'wrap' }}>
             <form onSubmit={(e) => { e.preventDefault(); setFiltro('fornecedor', busca); }}>
@@ -358,5 +360,55 @@ function PainelPendentes() {
           )}
         </Cartao>
     </>
+  );
+}
+
+/** Por que uma nota (chave) ou as notas de uma empresa/fornecedor (CNPJ) aparecem ou não na lista. */
+function Diagnostico() {
+  const [busca, setBusca] = useState('');
+  const [res, setRes] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+  const [soFora, setSoFora] = useState(true);
+  const consultar = async (e) => {
+    e.preventDefault();
+    setCarregando(true); setErro(null);
+    try { setRes(await api.get(`/pendentes-lancamento/diagnostico${qs({ busca })}`)); } catch (x) { setErro(x); setRes(null); }
+    setCarregando(false);
+  };
+  const notas = (res?.notas ?? []).filter((n) => !soFora || !n.aparece_na_lista_padrao);
+  return (
+    <details className="cartao" style={{ padding: 12 }}>
+      <summary style={{ cursor: 'pointer' }}><strong>Diagnóstico:</strong> <span className="muted">por que uma nota não aparece aqui?</span></summary>
+      <form onSubmit={consultar} className="linha" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Chave de acesso ou CNPJ (ex.: da Biomassa)" style={{ width: 360 }} />
+        <button className="btn pequeno" disabled={carregando}>{carregando ? 'Consultando…' : 'Consultar no Senior'}</button>
+        <label className="linha pequeno" style={{ gap: 6 }}><input type="checkbox" checked={soFora} onChange={(e) => setSoFora(e.target.checked)} />Só as que ficam fora da lista</label>
+      </form>
+      <Erro erro={erro} />
+      {res && (
+        <div style={{ marginTop: 10 }}>
+          {res.filiais_com_este_cnpj.length > 0 && <div className="pequeno">Filiais do Senior com este CNPJ: {res.filiais_com_este_cnpj.map((f) => `${f.codemp}/${f.codfil} ${f.nome}`).join(', ')}</div>}
+          <div className="muted pequeno">{numero(res.notas.length)} XML(s) no recebimento do Senior (últimos 300, sem limite de data) · {numero(res.notas.filter((n) => !n.aparece_na_lista_padrao).length)} fora da lista padrão</div>
+          <div className="tabela-wrap" style={{ maxHeight: 360 }}>
+            <table className="tabela">
+              <thead><tr><th>Nota</th><th>Emitente → Destinatário</th><th>tpNF</th><th>Situação</th><th>Por que não aparece</th></tr></thead>
+              <tbody>
+                {notas.map((n) => (
+                  <tr key={n.chave}>
+                    <td className="nowrap"><strong>{n.numero}</strong><div className="muted pequeno">emitida {data(n.emissao)} · {brl(n.valor)}</div><div className="mono pequeno" title={n.chave}>{n.chave?.slice(-12)}</div></td>
+                    <td className="pequeno">{n.emitente ?? fmtCnpj(n.cnpj_emitente)}<div className="muted">→ {n.empresa} ({fmtCnpj(n.cnpj_destinatario)})</div>
+                      {n.entrada_propria && <div className="muted">entrada própria</div>}{n.transferencia && <div className="muted">transferência</div>}{n.emitida_pelo_grupo && !n.entrada_propria && !n.transferencia && <div className="muted">emitida pelo grupo</div>}</td>
+                    <td className="pequeno">{String(n.tipope_no_xml ?? '—')}</td>
+                    <td className="pequeno">{n.situacao}</td>
+                    <td className="pequeno">{n.motivos.length ? n.motivos.join('; ') : <span className="muted">aparece (confira o período e os filtros)</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </details>
   );
 }

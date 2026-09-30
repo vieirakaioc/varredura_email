@@ -68,6 +68,61 @@ const hoje = () => new Date().toLocaleDateString('sv-SE');
 const diasEntre = (a, b) => Math.round((new Date(`${b}T12:00:00`) - new Date(`${a}T12:00:00`)) / 86400000);
 const soma = (lista, f) => Math.round(lista.reduce((s, x) => s + (f(x) ?? 0), 0) * 100) / 100;
 
+/** Uma linha do Senior -> nota da tela, já com a situação (mesma regra da tela do Senior). */
+function montarItem(l, canceladas, dia) {
+  const chave = String(l.CHVNEL ?? '').trim();
+  const recebido = iso(l.DATA_RECEBIMENTO) ?? iso(l.DATEMI);
+  const lancada = l.ENTRADA_NUM != null;
+  const cancelada = canceladas.get(chave) ?? null;
+  const cnpjFornecedor = String(l.CGCFOR ?? '').padStart(14, '0');
+  const cnpjDestino = String(l.CGCFIL ?? '').padStart(14, '0');
+  // Documento emitido pelo grupo (está no e-Docs de saída do Senior). Só não é pendência de entrada quando
+  // é uma saída de verdade. Continuam como entrada:
+  //  - nota de entrada própria (tpNF = 0), ex.: compra de produtor rural emitida pela Biomassa: quem lança é o emitente
+  //  - transferência entre empresas do grupo: quem lança é a filial destinatária
+  const emitidaPeloGrupo = l.SAIDA_NUM != null || l.EMIT_CODEMP != null;
+  const entradaPropria = emitidaPeloGrupo && ehEntrada(l.TIPOPE) && l.EMIT_CODEMP != null;
+  const transferencia = emitidaPeloGrupo && !entradaPropria && l.CODEMP != null && cnpjDestino !== cnpjFornecedor;
+  const nossaSaida = l.SAIDA_NUM != null && !entradaPropria && !transferencia;
+  // Empresa que precisa lançar: o destinatário; na entrada própria, o próprio emitente
+  const dest = entradaPropria
+    ? { CODEMP: l.EMIT_CODEMP, CODFIL: l.EMIT_CODFIL, SIGFIL: l.EMIT_SIGFIL, NOMFIL: l.EMIT_NOMFIL, SIGUFS: l.EMIT_SIGUFS }
+    : l;
+  return {
+    chave, numero: l.NUMNFC, especie: String(l.CODSNF ?? '').trim() || null,
+    // Antes de lançar, a nota ainda não tem série no Senior: o modelo vem da chave de acesso
+    especie_rotulo: ESPECIES[String(l.CODSNF ?? '').trim()] ?? modeloDaChave(chave) ?? 'Não identificado',
+    tipo: TIPOS[l.TIPNFE] ?? `Tipo ${l.TIPNFE}`,
+    emissao: iso(l.DATEMI), recebido_em: recebido,
+    valor: l.VLRLIQ != null ? Number(l.VLRLIQ) : null,
+    cnpj_fornecedor: cnpjFornecedor, fornecedor: String(l.NOMFOR ?? '').trim() || null,
+    codemp: dest.CODEMP, codfil: dest.CODFIL,
+    cnpj_destinatario: entradaPropria ? cnpjFornecedor : cnpjDestino,
+    // Destinatário: filial do grupo quando o CNPJ está cadastrado; senão, o nome que o Senior conhece
+    empresa: String(dest.SIGFIL ?? '').trim() || String(dest.NOMFIL ?? '').trim() || String(l.NOME_DESTINO ?? '').trim() || 'Empresa não identificada',
+    empresa_do_grupo: dest.CODEMP != null,
+    uf: String(dest.SIGUFS ?? '').trim() || null,
+    lancada, entrada: lancada ? { numero: l.ENTRADA_NUM, serie: String(l.ENTRADA_SERIE ?? '').trim(), data: iso(l.ENTRADA_DATA), situacao: String(l.ENTRADA_SITUACAO ?? '').trim() } : null,
+    nossa_saida: nossaSaida,
+    entrada_propria: entradaPropria,
+    transferencia,
+    tipo_movimento: nossaSaida ? 'saida' : 'entrada',
+    // na entrada própria o "fornecedor" é o produtor, que nem sempre está no XML como CNPJ cadastrado
+    fornecedor_cadastrado: l.FORNECEDOR_ID != null || entradaPropria,
+    tem_itens: Number(l.TEM_ITENS) === 1,
+    dias_parada: recebido ? Math.max(0, diasEntre(recebido, dia)) : null,
+    cancelada: Boolean(cancelada),
+    cancelada_em: cancelada?.data_evento ?? null,
+    justificativa_cancelamento: cancelada?.justificativa ?? null,
+    observacao: String(l.OBSNFC ?? '').trim() || null,
+  };
+}
+function montarItemClassificado(l, canceladas, dia) {
+  const i = montarItem(l, canceladas, dia);
+  const situacao = classificar(i);
+  return { ...i, situacao, situacao_rotulo: SITUACOES[situacao] };
+}
+
 /**
  * Painel de notas pendentes de lançamento.
  * filtros: de, ate, dias (padrão 60), codemp, codfil, especie, situacao (pendentes|lancadas|todas), fornecedor
@@ -102,54 +157,7 @@ export async function painelPendentes(filtros = {}) {
     .map((c) => [c.chave, c]));
 
   const dia = hoje();
-  let itens = linhas.map((l) => {
-    const chave = String(l.CHVNEL ?? '').trim();
-    const recebido = iso(l.DATA_RECEBIMENTO) ?? iso(l.DATEMI);
-    const lancada = l.ENTRADA_NUM != null;
-    const cancelada = canceladas.get(chave) ?? null;
-    const cnpjFornecedor = String(l.CGCFOR ?? '').padStart(14, '0');
-    const cnpjDestino = String(l.CGCFIL ?? '').padStart(14, '0');
-    // Documento emitido pelo grupo (está no e-Docs de saída do Senior). Só não é pendência de entrada quando
-    // é uma saída de verdade. Continuam como entrada:
-    //  - nota de entrada própria (tpNF = 0), ex.: compra de produtor rural emitida pela Biomassa: quem lança é o emitente
-    //  - transferência entre empresas do grupo: quem lança é a filial destinatária
-    const emitidaPeloGrupo = l.SAIDA_NUM != null || l.EMIT_CODEMP != null;
-    const entradaPropria = emitidaPeloGrupo && ehEntrada(l.TIPOPE) && l.EMIT_CODEMP != null;
-    const transferencia = emitidaPeloGrupo && !entradaPropria && l.CODEMP != null && cnpjDestino !== cnpjFornecedor;
-    const nossaSaida = l.SAIDA_NUM != null && !entradaPropria && !transferencia;
-    // Empresa que precisa lançar: o destinatário; na entrada própria, o próprio emitente
-    const dest = entradaPropria
-      ? { CODEMP: l.EMIT_CODEMP, CODFIL: l.EMIT_CODFIL, SIGFIL: l.EMIT_SIGFIL, NOMFIL: l.EMIT_NOMFIL, SIGUFS: l.EMIT_SIGUFS }
-      : l;
-    return {
-      chave, numero: l.NUMNFC, especie: String(l.CODSNF ?? '').trim() || null,
-      // Antes de lançar, a nota ainda não tem série no Senior: o modelo vem da chave de acesso
-      especie_rotulo: ESPECIES[String(l.CODSNF ?? '').trim()] ?? modeloDaChave(chave) ?? 'Não identificado',
-      tipo: TIPOS[l.TIPNFE] ?? `Tipo ${l.TIPNFE}`,
-      emissao: iso(l.DATEMI), recebido_em: recebido,
-      valor: l.VLRLIQ != null ? Number(l.VLRLIQ) : null,
-      cnpj_fornecedor: cnpjFornecedor, fornecedor: String(l.NOMFOR ?? '').trim() || null,
-      codemp: dest.CODEMP, codfil: dest.CODFIL,
-      cnpj_destinatario: entradaPropria ? cnpjFornecedor : cnpjDestino,
-      // Destinatário: filial do grupo quando o CNPJ está cadastrado; senão, o nome que o Senior conhece
-      empresa: String(dest.SIGFIL ?? '').trim() || String(dest.NOMFIL ?? '').trim() || String(l.NOME_DESTINO ?? '').trim() || 'Empresa não identificada',
-      empresa_do_grupo: dest.CODEMP != null,
-      uf: String(dest.SIGUFS ?? '').trim() || null,
-      lancada, entrada: lancada ? { numero: l.ENTRADA_NUM, serie: String(l.ENTRADA_SERIE ?? '').trim(), data: iso(l.ENTRADA_DATA), situacao: String(l.ENTRADA_SITUACAO ?? '').trim() } : null,
-      nossa_saida: nossaSaida,
-      entrada_propria: entradaPropria,
-      transferencia,
-      tipo_movimento: nossaSaida ? 'saida' : 'entrada',
-      // na entrada própria o "fornecedor" é o produtor, que nem sempre está no XML como CNPJ cadastrado
-      fornecedor_cadastrado: l.FORNECEDOR_ID != null || entradaPropria,
-      tem_itens: Number(l.TEM_ITENS) === 1,
-      dias_parada: recebido ? Math.max(0, diasEntre(recebido, dia)) : null,
-      cancelada: Boolean(cancelada),
-      cancelada_em: cancelada?.data_evento ?? null,
-      justificativa_cancelamento: cancelada?.justificativa ?? null,
-      observacao: String(l.OBSNFC ?? '').trim() || null,
-    };
-  }).map((i) => { const situacao = classificar(i); return { ...i, situacao, situacao_rotulo: SITUACOES[situacao] }; });
+  let itens = linhas.map((l) => montarItemClassificado(l, canceladas, dia));
 
   if (filtros.codemp) itens = itens.filter((i) => String(i.codemp) === String(filtros.codemp) && (!filtros.codfil || String(i.codfil) === String(filtros.codfil)));
   if (filtros.empresa) itens = itens.filter((i) => chaveEmpresa(i) === filtros.empresa);
@@ -251,5 +259,42 @@ export async function painelPendentes(filtros = {}) {
       // Limite alto só para proteger o navegador; a tela avisa quando cortar
       return { itens: lista.slice(0, LIMITE_ITENS), total_itens: lista.length, truncado: lista.length > LIMITE_ITENS };
     })(),
+  };
+}
+
+/**
+ * Diagnóstico: por que um XML aparece ou não na lista de pendentes.
+ * busca = chave de acesso (44 dígitos) ou CNPJ (do emitente ou do destinatário). Sem limite de data.
+ */
+export async function diagnosticarPendentes(busca) {
+  if (!seniorConfigurado()) throw new Error('Senior não configurado');
+  const dig = String(busca ?? '').replace(/\D/g, '');
+  if (dig.length !== 44 && dig.length !== 14 && dig.length !== 11) throw new Error('Informe a chave de acesso (44 dígitos) ou um CNPJ/CPF');
+  const filtro = dig.length === 44 ? 'x.CHVNEL = @busca' : '(x.CGCFIL = CAST(@num AS NUMERIC(14,0)) OR x.CGCFOR = CAST(@num AS NUMERIC(14,0)))';
+  const sql = SQL.replace('SELECT x.CHVNEL', 'SELECT TOP 300 x.CHVNEL, x.TIPOPE AS TIPOPE_BRUTO')
+    .replace(/WHERE \(\(x\.DATEMI[\s\S]*\{somenteAbertas\}/, `WHERE ${filtro} ORDER BY x.DATEMI DESC`);
+  const extras = dig.length === 44 ? { busca: dig } : { num: dig };
+  const [linhas, filiais] = await Promise.all([
+    consultar(sql, null, extras),
+    dig.length === 44 ? Promise.resolve([]) : consultar('SELECT CODEMP, CODFIL, NOMFIL, SIGFIL, NUMCGC FROM E070FIL WHERE NUMCGC = CAST(@num AS NUMERIC(14,0))', null, { num: dig }),
+  ]);
+  const canceladas = new Map(all("SELECT chave, data_evento, justificativa FROM sefaz_eventos WHERE tp_evento IN ('110111','110112')").map((c) => [c.chave, c]));
+  const dia = hoje();
+  return {
+    filiais_com_este_cnpj: filiais.map((f) => ({ codemp: f.CODEMP, codfil: f.CODFIL, nome: String(f.SIGFIL ?? f.NOMFIL ?? '').trim() })),
+    notas: linhas.map((l) => {
+      const i = montarItemClassificado(l, canceladas, dia);
+      const motivos = [];
+      if (i.lancada) motivos.push(`já lançada no Senior (NF ${i.entrada.numero}, ${i.entrada.data ?? 'sem data'}, situação ${i.entrada.situacao})`);
+      if (!i.empresa_do_grupo) motivos.push('destinatário não encontrado nas filiais do Senior (E070FIL): só aparece com "Incluir XMLs de terceiros"');
+      if (i.nossa_saida) motivos.push('tratada como saída do grupo: só aparece com Tipo "Saídas" ou "Todos"');
+      return {
+        chave: i.chave, numero: i.numero, emissao: i.emissao, recebido_em: i.recebido_em, valor: i.valor,
+        cnpj_emitente: i.cnpj_fornecedor, emitente: i.fornecedor, cnpj_destinatario: String(l.CGCFIL ?? ''), empresa: i.empresa,
+        tipope_no_xml: l.TIPOPE_BRUTO, emitida_pelo_grupo: l.SAIDA_NUM != null || l.EMIT_CODEMP != null,
+        entrada_propria: i.entrada_propria, transferencia: i.transferencia,
+        situacao: i.situacao_rotulo, aparece_na_lista_padrao: !motivos.length, motivos,
+      };
+    }),
   };
 }

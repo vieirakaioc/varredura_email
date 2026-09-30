@@ -70,6 +70,10 @@ rotasErpAdmin.get('/pendentes-lancamento', permitir('ver'), async (req, res) => 
   try { res.json(await painelPendentes(req.query)); } catch (e) { erroSenior(res, e); }
 });
 
+rotasErpAdmin.get('/pendentes-lancamento/diagnostico', permitir('ver'), async (req, res) => {
+  const { diagnosticarPendentes } = await import('../erp/pendentes.js');
+  try { res.json(await diagnosticarPendentes(req.query.busca)); } catch (e) { erroSenior(res, e); }
+});
 rotasErpAdmin.get('/lancamentos', permitir('ver'), async (req, res) => {
   const { painelLancamentos } = await import('../erp/lancamentos.js');
   try { res.json(await painelLancamentos(req.query)); } catch (e) { erroSenior(res, e); }
