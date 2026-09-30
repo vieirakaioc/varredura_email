@@ -3,7 +3,7 @@
 //
 // "Pendente" = o XML está no recebimento e não existe entrada com a mesma chave de acesso.
 // Cancelamentos conhecidos (SEFAZ / saída do Senior) são destacados: não devem ser lançados.
-import { all, getConfig } from '../db/index.js';
+import { all, get, getConfig, run } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { comCache } from './cache.js';
 
@@ -54,6 +54,35 @@ const SQL = `SELECT x.CHVNEL, x.NUMNFC, x.CODSNF, x.TIPNFE, x.TIPOPE, x.DATEMI, 
   -- As ainda não lançadas entram sempre (desde @abertasDesde), como na tela do Senior: o período limita só as lançadas.
   WHERE (((x.DATEMI >= @desde AND x.DATEMI <= @ate) OR (x.DATENT >= @desde AND x.DATENT <= @ate))
       OR (x.DATEMI >= @abertasDesde AND NOT EXISTS (SELECT 1 FROM E440NFC n3 WHERE n3.CHVNEL = x.CHVNEL AND n3.SITNFC <> '3'))){somenteAbertas}`;
+
+// ------------------------------------------------------------------ motivo de não lançar (informado pela equipe)
+export const MOTIVOS = {
+  mercadoria_nao_chegou: 'Mercadoria ainda não chegou',
+  ativo_nao_chegou: 'Ativo/imobilizado: bem não chegou ou não foi instalado',
+  servico_nao_concluido: 'Serviço ainda não concluído/aceito',
+  sem_pedido: 'Sem pedido/OC ou OC não aprovada',
+  divergencia_pedido: 'Divergência de preço/quantidade com o pedido',
+  aguardando_aprovacao: 'Aguardando aprovação do solicitante/gestor',
+  erro_fiscal: 'Erro fiscal na nota (aguardando carta de correção ou nova nota)',
+  cancelamento_recusa: 'Será cancelada/recusada pelo fornecedor',
+  devolucao: 'Mercadoria devolvida/recusada no recebimento',
+  cadastro_pendente: 'Falta cadastro (fornecedor, produto, transação)',
+  duplicada: 'Nota duplicada ou já lançada por outro documento',
+  outra_area: 'Outra área lança (faturamento, frota, jurídico...)',
+  outro: 'Outro (ver observação)',
+};
+
+/** Grava (ou apaga, com motivo vazio) o motivo de um XML não ter sido lançado. */
+export function salvarMotivo({ chave, motivo, observacao }, usuarioId) {
+  const k = String(chave ?? '').replace(/\D/g, '');
+  if (k.length !== 44) throw Object.assign(new Error('Chave de acesso inválida'), { status: 400, expose: true });
+  if (!motivo) { run('DELETE FROM pendencia_motivos WHERE chave = ?', [k]); return null; }
+  if (!MOTIVOS[motivo]) throw Object.assign(new Error('Motivo desconhecido'), { status: 400, expose: true });
+  run(`INSERT INTO pendencia_motivos (chave, motivo, observacao, usuario_id, atualizado_em) VALUES (?, ?, ?, ?, datetime('now','localtime'))
+    ON CONFLICT(chave) DO UPDATE SET motivo = excluded.motivo, observacao = excluded.observacao, usuario_id = excluded.usuario_id, atualizado_em = excluded.atualizado_em`,
+  [k, motivo, String(observacao ?? '').trim() || null, usuarioId ?? null]);
+  return get('SELECT * FROM pendencia_motivos WHERE chave = ?', [k]);
+}
 
 // ------------------------------------------------------------------ responsável pelo lançamento
 // Notas de bagaço, madeira, cavaco etc. são lançadas pelo time de Faturamento, não pela Escrita Fiscal.
@@ -233,7 +262,14 @@ export async function painelPendentes(filtros = {}) {
     .map((c) => [c.chave, c]));
 
   const dia = hoje();
-  let itens = linhas.map((l) => montarItemClassificado(l, canceladas, dia));
+  // Motivos informados pela equipe (gravados no Validador, fora do Senior)
+  const motivos = new Map(all(`SELECT m.chave, m.motivo, m.observacao, m.atualizado_em, u.nome AS usuario
+    FROM pendencia_motivos m LEFT JOIN usuarios u ON u.id = m.usuario_id`).map((m) => [m.chave, m]));
+  let itens = linhas.map((l) => {
+    const i = montarItemClassificado(l, canceladas, dia);
+    const m = motivos.get(i.chave);
+    return m ? { ...i, motivo: m.motivo, motivo_rotulo: MOTIVOS[m.motivo] ?? m.motivo, motivo_obs: m.observacao, motivo_por: m.usuario, motivo_em: m.atualizado_em } : i;
+  });
 
   if (filtros.codemp) itens = itens.filter((i) => String(i.codemp) === String(filtros.codemp) && (!filtros.codfil || String(i.codfil) === String(filtros.codfil)));
   // A base do Senior também recebe XMLs de terceiros: por padrão, só o que é destinado ao grupo
@@ -270,6 +306,15 @@ export async function painelPendentes(filtros = {}) {
   // seleção continuam mostrando todas as empresas, com a escolhida em destaque
   const pendentesTodasEmpresas = itens.filter((i) => !i.lancada && !i.nossa_saida);
   if (filtros.empresa) itens = itens.filter((i) => chaveEmpresa(i) === filtros.empresa);
+  // Por que estão pendentes: contagem por motivo informado (antes do filtro de motivo, para o cartão mostrar todos)
+  const pendentesParaMotivo = itens.filter((i) => !i.lancada && !i.nossa_saida);
+  const porMotivo = [...pendentesParaMotivo.reduce((m, i) => {
+    const k = i.motivo ?? 'sem_motivo';
+    const a = m.get(k) ?? { chave: k, rotulo: k === 'sem_motivo' ? 'Sem motivo informado' : MOTIVOS[k] ?? k, qtd: 0, valor: 0 };
+    a.qtd += 1; a.valor += i.valor ?? 0;
+    return m.set(k, a);
+  }, new Map()).values()].sort((a, b) => (a.chave === 'sem_motivo') - (b.chave === 'sem_motivo') || b.qtd - a.qtd);
+  if (filtros.motivo) itens = itens.filter((i) => (i.motivo ?? 'sem_motivo') === filtros.motivo);
 
   const pendentes = itens.filter((i) => !i.lancada && !i.nossa_saida);
   const lancadas = itens.filter((i) => i.lancada);
@@ -336,6 +381,7 @@ export async function painelPendentes(filtros = {}) {
       nossas_saidas: nossasSaidas,       // documentos que nós emitimos (não são entrada)
     },
     por_situacao: porSituacao,
+    por_motivo: porMotivo.map((x) => ({ ...x, valor: Math.round(x.valor * 100) / 100 })), motivos_disponiveis: MOTIVOS,
     por_responsavel: porResponsavel, responsavel: responsavel ?? 'todos',
     responsavel_identificado: Boolean(cols.descricao || cols.ncm),
     colunas_produto: { descricao: cols.descricao, ncm: cols.ncm },

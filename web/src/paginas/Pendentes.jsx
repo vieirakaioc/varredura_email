@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
-import { Topo } from '../contexto.jsx';
+import { Topo, useAuth } from '../contexto.jsx';
 import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 import Lancamentos from './Lancamentos.jsx';
 
@@ -24,6 +24,11 @@ const MESES_FILTRO = Array.from({ length: 12 }, (_, i) => {
 
 // Cartões de ranking mostram os 5 primeiros; "Ver todas" abre o resto e o Excel leva a lista inteira
 const TOP = 5;
+const COLUNAS_MOTIVO = [
+  { titulo: 'Motivo', valor: (x) => x.rotulo },
+  { titulo: 'Notas pendentes', tipo: 'numero', valor: (x) => x.qtd },
+  { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor },
+];
 const COLUNAS_EMPRESA = [
   { titulo: 'Emp/Fil', valor: (x) => codigoEmpresa(x.chave) },
   { titulo: 'Empresa', valor: (x) => x.rotulo },
@@ -56,6 +61,9 @@ const COLUNAS_EXPORT = [
   { titulo: 'Entrada no Senior', tipo: 'data', valor: (l) => l.entrada?.data },
   { titulo: 'Observação do XML', valor: (l) => l.observacao },
   { titulo: 'Produto (1º item)', valor: (l) => l.produto },
+  { titulo: 'Motivo de não lançar', valor: (l) => l.motivo_rotulo },
+  { titulo: 'Observação do motivo', valor: (l) => l.motivo_obs },
+  { titulo: 'Motivo informado por', valor: (l) => (l.motivo_por ? `${l.motivo_por} em ${data(l.motivo_em, true)}` : '') },
   { titulo: 'Responsável', valor: (l) => (l.responsavel === 'faturamento' ? 'Faturamento' : 'Escrita Fiscal') },
 ];
 
@@ -108,6 +116,7 @@ function PainelPendentes() {
     tipo: params.get('tipo') ?? 'entradas',
     // quem lança: Escrita Fiscal (padrão) ou Faturamento (bagaço, madeira, cavaco...)
     responsavel: params.get('responsavel') ?? 'fiscal',
+    motivo: params.get('motivo') ?? '',
     situacoes: params.get('situacoes') ?? 'pendente,inconsistente,incompleta',
     sem_empresas: params.get('sem_empresas') ?? '',
   };
@@ -124,11 +133,16 @@ function PainelPendentes() {
   const [busca, setBusca] = useState(f.fornecedor);
   const [mostrar, setMostrar] = useState(500);
   const [verTodasEmpresas, setVerTodasEmpresas] = useState(false);
+  // gráfico chegada × lançamento: diário ou acumulado (lembrado neste navegador)
+  const [visaoSerie, setVisaoSerie] = useState(() => { try { return localStorage.getItem('pendentes_visao_serie') ?? 'diario'; } catch { return 'diario'; } });
+  const trocarVisaoSerie = (v) => { setVisaoSerie(v); try { localStorage.setItem('pendentes_visao_serie', v); } catch { /* sem storage */ } };
   const [verTodosFornecedores, setVerTodosFornecedores] = useState(false);
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ ...f, [k]: v }).filter(([, x]) => x !== '' && x != null)));
-  const { dados, erro, carregando, recarregar } = useDados(
-    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel })}`),
-    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel], { automatico: false, memoria: 'pendentes' },
+  const { permissoes } = useAuth();
+  const podeMotivo = permissoes.includes('decidir');
+  const { dados, erro, carregando, recarregar, atualizar } = useDados(
+    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel, motivo: f.motivo })}`),
+    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel, f.motivo], { automatico: false, memoria: 'pendentes' },
   );
   const k = dados?.indicadores;
   const itens = (dados?.itens ?? []).filter((l) => {
@@ -235,11 +249,13 @@ function PainelPendentes() {
               Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
             </div>
 
-            {(f.empresa || f.especie || f.faixa || f.fornecedor) && (
+            {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo) && (
               <div className="linha pequeno" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <strong className="muted">Filtrando por:</strong>
                 {f.empresa && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('empresa', '')}>
                   Empresa: <strong>{codigoEmpresa(f.empresa)} {dados.por_empresa.find((x) => x.chave === f.empresa)?.rotulo ?? ''}</strong> ✕</button>}
+                {f.motivo && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('motivo', '')}>
+                  Motivo: <strong>{dados.por_motivo?.find((x) => x.chave === f.motivo)?.rotulo ?? f.motivo}</strong> ✕</button>}
                 {f.especie && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('especie', '')}>Documento: <strong>{f.especie}</strong> ✕</button>}
                 {f.faixa && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('faixa', '')}>Espera: <strong>{dados.aging.find((x) => x.id === f.faixa)?.rotulo ?? f.faixa}</strong> ✕</button>}
                 {f.fornecedor && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => { setBusca(''); setFiltro('fornecedor', ''); }}>Fornecedor: <strong>{f.fornecedor}</strong> ✕</button>}
@@ -249,7 +265,14 @@ function PainelPendentes() {
             )}
 
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
-              <Cartao titulo="Chegada × lançamento" sub="últimos 21 dias · XMLs recebidos por dia e notas lançadas por dia (a partir de XML)">
+              <Cartao titulo="Chegada × lançamento"
+                sub={visaoSerie === 'acumulado' ? 'últimos 21 dias · soma dia a dia: se o saldo sobe, as notas estão acumulando' : 'últimos 21 dias · XMLs recebidos por dia e notas lançadas por dia (a partir de XML)'}
+                acoes={<div className="linha" style={{ gap: 2 }}>
+                  {[['diario', 'Diário'], ['acumulado', 'Acumulado']].map(([v, r]) => (
+                    <button key={v} className={`btn pequeno ${visaoSerie === v ? '' : 'ghost'}`} onClick={() => trocarVisaoSerie(v)}>{r}</button>
+                  ))}
+                </div>}>
+                {visaoSerie === 'acumulado' ? <SerieAcumulada serie={dados.serie} /> : <>
                 <div className="grafico-legenda">
                   <span><i style={{ background: 'var(--serie-1)' }} />Recebidas no dia</span>
                   <span><i style={{ background: 'var(--status-bom)' }} />Lançadas no dia</span>
@@ -270,6 +293,7 @@ function PainelPendentes() {
                     <Line isAnimationActive={false} type="linear" dataKey="pendentes" name="Ainda sem lançar" stroke="var(--status-critico)" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: 'var(--status-critico)' }} />
                   </ComposedChart>
                 </ResponsiveContainer>
+                              </>}
               </Cartao>
 
               <Cartao titulo="Há quanto tempo esperam" sub="clique para filtrar a lista">
@@ -293,6 +317,28 @@ function PainelPendentes() {
                 </ResponsiveContainer>
               </Cartao>
             </div>
+
+            <Cartao titulo="Por que estão pendentes" sub="motivo informado pela equipe na lista abaixo · clique para filtrar" semPadding
+              acoes={<BotaoExportar titulo="Pendentes por motivo" linhas={dados.por_motivo ?? []} colunas={COLUNAS_MOTIVO} />}>
+              <div style={{ padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '6px 24px' }}>
+                {(dados.por_motivo ?? []).map((x) => {
+                  const total = (dados.por_motivo ?? []).reduce((t, y) => t + y.qtd, 0) || 1;
+                  const ativo = f.motivo === x.chave;
+                  const semMotivo = x.chave === 'sem_motivo';
+                  return (
+                    <button key={x.chave} onClick={() => setFiltro('motivo', ativo ? '' : x.chave)}
+                      style={{ background: 'none', border: 'none', padding: '3px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', color: 'inherit', opacity: !f.motivo || ativo ? 1 : 0.45 }}>
+                      <div className="linha entre pequeno" style={{ flexWrap: 'nowrap' }}>
+                        <span className="truncar" style={{ fontWeight: ativo ? 650 : undefined }} title={x.rotulo}>{semMotivo ? <em className="muted">{x.rotulo}</em> : x.rotulo}</span>
+                        <span className="nowrap"><strong>{numero(x.qtd)}</strong> <span className="muted">· {Math.round((x.qtd / total) * 100)}% · {brlCurto(x.valor)}</span></span>
+                      </div>
+                      <div className="barra-progresso"><div style={{ width: `${(x.qtd / total) * 100}%`, background: semMotivo ? 'var(--status-neutro)' : ativo ? 'var(--status-critico)' : 'var(--status-atencao)' }} /></div>
+                    </button>
+                  );
+                })}
+                {!(dados.por_motivo ?? []).length && <div className="muted pequeno">Nada pendente.</div>}
+              </div>
+            </Cartao>
 
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr)' }}>
               <Cartao titulo="Pendentes por empresa" sub={f.empresa ? 'clique de novo para ver todas' : `top ${TOP} · clique para filtrar`} semPadding
@@ -371,7 +417,7 @@ function PainelPendentes() {
             <label className="linha pequeno" style={{ gap: 6 }} title="A base do Senior também recebe XMLs entre terceiros, que não são pendência do grupo">
               <input type="checkbox" checked={f.incluir_terceiros === '1'} onChange={(e) => setFiltro('incluir_terceiros', e.target.checked ? '1' : '')} />Incluir XMLs de terceiros{k?.fora_do_grupo ? ` (${numero(k.fora_do_grupo)})` : ''}
             </label>
-            {(f.empresa || f.especie || f.faixa || f.fornecedor) && (
+            {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo) && (
               <button className="btn pequeno ghost" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes, responsavel: f.responsavel }); }}>Limpar filtros</button>
             )}
             <span className="espaco" />
@@ -383,7 +429,7 @@ function PainelPendentes() {
           ) : (
             <div className="tabela-wrap">
               <table className="tabela">
-                <thead><tr><th>Espera</th><th>Recebida</th><th>Documento</th><th>Produto</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
+                <thead><tr><th>Espera</th><th className="col-larga">Recebida</th><th>Documento</th><th>Produto</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Motivo de não lançar</th><th className="col-larga">Chave</th></tr></thead>
                 <tbody>
                   {itens.slice(0, mostrar).map((l) => {
                     // motivo da situação: vai ao lado do selo, na mesma linha
@@ -399,13 +445,13 @@ function PainelPendentes() {
                             {l.dias_parada === 0 ? 'hoje' : `${l.dias_parada} dia${l.dias_parada > 1 ? 's' : ''}`}
                           </span>
                         </td>
-                        <td className="nowrap muted">{data(l.recebido_em)}</td>
+                        <td className="nowrap muted col-larga">{data(l.recebido_em)}</td>
                         <td className="nowrap" title={`emitida em ${data(l.emissao)}`}><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong></td>
-                        <td style={{ maxWidth: 200 }} title={l.produto ?? ''}>
+                        <td style={{ maxWidth: 170 }} title={l.produto ?? ''}>
                           <div className="truncar">{l.produto ?? <span className="muted">—</span>}</div>
                           {l.responsavel === 'faturamento' && f.responsavel !== 'faturamento' && <span className="tag" style={{ marginTop: 2 }}>Faturamento</span>}
                         </td>
-                        <td style={{ maxWidth: 300 }}>
+                        <td style={{ maxWidth: 220 }}>
                           <div className="truncar" title={l.fornecedor ?? ''}>{l.fornecedor ?? <span className="muted">não cadastrado</span>}</div>
                           <div className="muted pequeno mono">{fmtCnpj(l.cnpj_fornecedor)}</div>
                         </td>
@@ -414,8 +460,9 @@ function PainelPendentes() {
                           {l.uf ? <span className="muted"> · {l.uf}</span> : null}
                         </td>
                         <td className="num">{brl(l.valor)}</td>
-                        <td className="nowrap"><span className={`badge ${selo}`}>{l.situacao_rotulo}</span>{motivo && <span className="muted pequeno" style={{ marginLeft: 6 }}>{motivo}</span>}</td>
-                        <td className="mono muted nowrap" title={l.chave}>{l.chave?.slice(-12)}</td>
+                        <td className="nowrap" title={motivo ?? ''}><span className={`badge ${selo}`}>{l.situacao_rotulo}</span>{motivo && <div className="muted pequeno truncar" style={{ maxWidth: 160 }}>{motivo}</div>}</td>
+                        <td><MotivoNota nota={l} motivos={dados.motivos_disponiveis} pode={podeMotivo && !l.lancada} aoSalvar={atualizar} /></td>
+                        <td className="mono muted nowrap col-larga" title={l.chave}>{l.chave?.slice(-12)}</td>
                       </tr>
                     );
                   })}
@@ -479,5 +526,102 @@ function Diagnostico() {
         </div>
       )}
     </details>
+  );
+}
+
+/** Motivo de a nota ainda não ter sido lançada: escolhido pela equipe, com observação opcional. */
+function MotivoNota({ nota, motivos, pode, aoSalvar }) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const salvar = async (motivo, observacao) => {
+    setSalvando(true); setErro(null);
+    try { await api.put('/pendentes-lancamento/motivo', { chave: nota.chave, motivo, observacao }); aoSalvar(); } catch (e) { setErro(e.message); }
+    setSalvando(false);
+  };
+  const escolher = (motivo) => {
+    // "Outro" pede a explicação; nos demais a observação é opcional (botão ✎)
+    const obs = motivo === 'outro' ? window.prompt('Descreva o motivo:', nota.motivo_obs ?? '') : nota.motivo_obs;
+    if (motivo === 'outro' && obs === null) return;
+    salvar(motivo, obs);
+  };
+  const quem = nota.motivo_por ? `${nota.motivo_por} · ${data(nota.motivo_em, true)}` : '';
+  if (!pode) {
+    return nota.motivo
+      ? <span className="pequeno" title={[nota.motivo_obs, quem].filter(Boolean).join(' — ')}>{nota.motivo_rotulo}{nota.motivo_obs ? ' ✎' : ''}</span>
+      : <span className="muted">—</span>;
+  }
+  return (
+    <div className="linha" style={{ gap: 4, flexWrap: 'nowrap' }} title={[nota.motivo_obs, quem].filter(Boolean).join(' — ')}>
+      <select value={nota.motivo ?? ''} disabled={salvando} onChange={(e) => escolher(e.target.value)}
+        aria-label="Motivo de não lançar" style={{ fontSize: 12, padding: '3px 6px', maxWidth: 220, color: nota.motivo ? 'var(--texto)' : 'var(--texto-3)' }}>
+        <option value="">— informar motivo —</option>
+        {Object.entries(motivos ?? {}).map(([k, r]) => <option key={k} value={k}>{r}</option>)}
+      </select>
+      {nota.motivo && (
+        <button className="btn pequeno ghost" style={{ padding: '2px 6px' }} disabled={salvando}
+          title={nota.motivo_obs ? `Observação: ${nota.motivo_obs}` : 'Acrescentar observação'}
+          onClick={() => { const obs = window.prompt('Observação:', nota.motivo_obs ?? ''); if (obs !== null) salvar(nota.motivo, obs); }}>
+          {nota.motivo_obs ? '✎' : '+obs'}
+        </button>
+      )}
+      {erro && <span className="muted pequeno" style={{ color: 'var(--erro)' }}>{erro}</span>}
+    </div>
+  );
+}
+
+/**
+ * Recebidas × lançadas somadas dia a dia nos últimos 21 dias. O saldo (recebidas − lançadas acumuladas)
+ * subindo quer dizer que entra mais XML do que a equipe lança: notas acumulando.
+ */
+function SerieAcumulada({ serie }) {
+  let rec = 0, lan = 0;
+  const pontos = (serie ?? []).map((d) => {
+    rec += d.recebidas; lan += d.lancadas;
+    return { dia: d.dia, recebidas: rec, lancadas: lan, saldo: rec - lan };
+  });
+  const ultimo = pontos[pontos.length - 1] ?? { recebidas: 0, lancadas: 0, saldo: 0 };
+  const primeiroSaldo = pontos.find((p) => p.recebidas || p.lancadas)?.saldo ?? 0;
+  return (
+    <>
+      <div className="grafico-legenda">
+        <span><i style={{ background: 'var(--serie-1)', height: 3, borderRadius: 0, verticalAlign: 3 }} />Recebidas (acumulado)</span>
+        <span><i style={{ background: 'var(--status-bom)', height: 3, borderRadius: 0, verticalAlign: 3 }} />Lançadas (acumulado)</span>
+        <span><i style={{ background: 'var(--status-critico)', opacity: 0.55 }} />Saldo: recebidas − lançadas (eixo à direita)</span>
+        <span className="espaco" />
+        <span>
+          No período: <strong>{numero(ultimo.recebidas)}</strong> recebidas, <strong>{numero(ultimo.lancadas)}</strong> lançadas ·{' '}
+          <strong style={{ color: ultimo.saldo > 0 ? 'var(--erro)' : 'var(--ok)' }}>{ultimo.saldo > 0 ? `+${numero(ultimo.saldo)} acumulando` : `${numero(ultimo.saldo)} (lançou mais do que chegou)`}</strong>
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <ComposedChart data={pontos} margin={{ left: 0, right: 0, top: 20 }}>
+          <CartesianGrid vertical={false} stroke="var(--grade)" />
+          <XAxis dataKey="dia" tickFormatter={diaCurto} tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} minTickGap={6} />
+          <YAxis yAxisId="total" allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={44} />
+          <YAxis yAxisId="saldo" orientation="right" allowDecimals={false} tick={{ ...eixo, fill: 'var(--status-critico)' }} axisLine={false} tickLine={false} width={40} />
+          <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
+            <div className="tooltip-grafico">
+              <div className="t">Até {data(payload[0].payload.dia)}</div>
+              <div>Recebidas: <strong>{numero(payload[0].payload.recebidas)}</strong></div>
+              <div>Lançadas: <strong>{numero(payload[0].payload.lancadas)}</strong></div>
+              <div>Saldo: <strong style={{ color: payload[0].payload.saldo > 0 ? 'var(--erro)' : 'var(--ok)' }}>{payload[0].payload.saldo > 0 ? '+' : ''}{numero(payload[0].payload.saldo)}</strong></div>
+            </div>
+          ) : null)} />
+          <Bar yAxisId="saldo" isAnimationActive={false} dataKey="saldo" name="Saldo" maxBarSize={16} radius={[2, 2, 0, 0]}>
+            {pontos.map((p) => <Cell key={p.dia} fill={p.saldo > 0 ? 'var(--status-critico)' : 'var(--status-bom)'} fillOpacity={0.45} />)}
+            <LabelList dataKey="saldo" position="top" style={{ ...ROTULO, fontSize: 9, fill: 'var(--status-critico)' }} formatter={(v) => (v ? numero(v) : '')} />
+          </Bar>
+          <Line yAxisId="total" isAnimationActive={false} type="monotone" dataKey="recebidas" name="Recebidas" stroke="var(--serie-1)" strokeWidth={2.5} dot={false}>
+            <LabelList dataKey="recebidas" position="top" style={{ ...ROTULO, fontSize: 9, fill: 'var(--serie-1)' }} formatter={(v) => v} content={(p) => (p.index === pontos.length - 1 ? <text x={p.x} y={p.y - 6} textAnchor="end" style={{ ...ROTULO, fill: 'var(--serie-1)' }}>{numero(p.value)}</text> : null)} />
+          </Line>
+          <Line yAxisId="total" isAnimationActive={false} type="monotone" dataKey="lancadas" name="Lançadas" stroke="var(--status-bom)" strokeWidth={2.5} dot={false}>
+            <LabelList dataKey="lancadas" content={(p) => (p.index === pontos.length - 1 ? <text x={p.x} y={p.y + 14} textAnchor="end" style={{ ...ROTULO, fill: 'var(--ok)' }}>{numero(p.value)}</text> : null)} />
+          </Line>
+        </ComposedChart>
+      </ResponsiveContainer>
+      {primeiroSaldo !== ultimo.saldo && (
+        <div className="muted pequeno">O saldo mostra só o movimento destes 21 dias; o total em aberto de antes está no cartão “Pendentes de lançamento”.</div>
+      )}
+    </>
   );
 }

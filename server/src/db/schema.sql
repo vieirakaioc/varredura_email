@@ -460,3 +460,13 @@ CREATE TABLE IF NOT EXISTS configuracoes (
   chave TEXT PRIMARY KEY,
   valor TEXT
 );
+
+-- Motivo informado pela equipe para um XML do Senior ainda não ter virado nota de entrada
+-- (ex.: bem do ativo que ainda não chegou). Chave = chave de acesso do XML.
+CREATE TABLE IF NOT EXISTS pendencia_motivos (
+  chave TEXT PRIMARY KEY,
+  motivo TEXT NOT NULL,
+  observacao TEXT,
+  usuario_id INTEGER,
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
