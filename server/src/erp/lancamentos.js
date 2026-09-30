@@ -13,73 +13,94 @@ const LIMITE_ITENS = 10000;
 
 // ------------------------------------------------------------------ equipes e metas de lançamento
 // Só o time de Escrita Fiscal tem meta; as demais pessoas que lançam nota aparecem como "Outros".
-// Meta automática = média do time de Escrita Fiscal, em notas por pessoa em cada dia trabalhado, nos últimos
-// 90 dias (notas não canceladas, pela data em que foram lançadas). Metas manuais substituem a automática.
-const DIAS_BASE_META = 90;
-// Time inicial (usuários do Senior); pode ser alterado na tela, em "Editar metas"
+// Meta pela capacidade de trabalho:
+//   minutos da jornada (saída − entrada − intervalo) × % de tempo produtivo ÷ minutos por nota = notas por dia
+//   ex.: 08:00–17:48 com 1 h de almoço = 528 min × 85% ÷ 5 min = 89 notas/dia
+// Cada pessoa pode ter jornada própria (minutos por dia e dias da semana, ex.: aprendiz) ou uma meta fixa.
+// Feriados não são descontados.
 const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA', 'AMANDA.MARQUES', 'ELZELI.SANTOS',
   'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA'];
+const PARAMETROS_PADRAO = { minutos_por_nota: 5, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
+// Emanuelle é aprendiz: 4 horas por dia, de segunda a quinta
+const JORNADAS_PADRAO = { 'EMANUELLE.SILVA': { minutos_dia: 240, dias_semana: [1, 2, 3, 4] } };
 export const EQUIPES = { fiscal: 'Escrita Fiscal', outros: 'Outros' };
 const nomeChave = (n) => String(n ?? '').trim().toUpperCase();
+const minutos = (hhmm) => { const [h, m] = String(hhmm ?? '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
-const SQL_MEDIA = `SELECT MAX(u.NOMUSU) AS NOMUSU, q.USUGER, COUNT(*) AS DIAS, SUM(q.N) AS NOTAS FROM (
-    SELECT n.USUGER, n.DATGER, COUNT(*) AS N FROM E440NFC n
-    WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'
-    GROUP BY n.USUGER, n.DATGER) q
-  LEFT JOIN r999usu u ON u.CODUSU = q.USUGER
-  GROUP BY q.USUGER`;
-let historicoPessoas = { em: 0, linhas: null };
-
-/** Dias trabalhados e notas por pessoa nos últimos 90 dias (cache de 12 horas). */
-async function historicoPorPessoa() {
-  if (Date.now() - historicoPessoas.em < 12 * 3600000) return historicoPessoas.linhas;
-  try {
-    const linhas = await consultar(SQL_MEDIA, new Date(Date.now() - DIAS_BASE_META * 86400000), { ate: new Date() });
-    historicoPessoas = {
-      em: Date.now(),
-      linhas: linhas.map((l) => ({ usuario: String(l.NOMUSU ?? '').trim() || `Usuário ${l.USUGER}`, dias: Number(l.DIAS), notas: Number(l.NOTAS) })),
-    };
-  } catch {
-    historicoPessoas = { em: Date.now() - 11 * 3600000, linhas: historicoPessoas.linhas }; // tenta de novo em 1 hora
-  }
-  return historicoPessoas.linhas;
-}
-
-/** Metas em vigor e composição do time. A média automática considera só o time de Escrita Fiscal. */
-export function metasLancamento(historico = historicoPessoas.linhas) {
+/** Metas em vigor, time e a capacidade de cada pessoa. */
+export function metasLancamento() {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
+  const par = { ...PARAMETROS_PADRAO, ...(cfg.parametros ?? {}) };
   const membros = cfg.escrita_fiscal ?? ESCRITA_FISCAL_PADRAO;
   const doTime = new Set(membros.map(nomeChave));
-  const base = (historico ?? []).filter((h) => doTime.has(nomeChave(h.usuario)));
-  const dias = base.reduce((s, h) => s + h.dias, 0);
-  const automatica = dias ? Math.round((base.reduce((s, h) => s + h.notas, 0) / dias) * 10) / 10 : null;
-  const auto = automatica != null ? Math.max(1, Math.round(automatica)) : null;
-  const pessoas = cfg.pessoas ?? {};
+  const jornadas = Object.fromEntries(Object.entries(cfg.jornadas ?? JORNADAS_PADRAO).map(([n, j]) => [nomeChave(n), j]));
+  const fixas = Object.fromEntries(Object.entries(cfg.pessoas ?? {}).map(([n, v]) => [nomeChave(n), v]));
+  const minutosPadrao = Math.max(0, minutos(par.saida) - minutos(par.entrada) - Number(par.intervalo_min || 0));
+  const porDia = (min) => Math.floor((min * (Number(par.produtividade) / 100)) / Number(par.minutos_por_nota || 5));
+  const padrao = porDia(minutosPadrao);
   const equipeDe = (usuario) => (doTime.has(nomeChave(usuario)) ? 'fiscal' : 'outros');
+  /** Jornada e meta diária de uma pessoa do time (null para quem não é do time). */
+  const jornadaDe = (usuario) => {
+    if (equipeDe(usuario) !== 'fiscal') return null;
+    const j = jornadas[nomeChave(usuario)] ?? {};
+    const min = j.minutos_dia ?? minutosPadrao;
+    const fixa = fixas[nomeChave(usuario)];
+    return { minutos_dia: min, dias_semana: j.dias_semana ?? par.dias_semana, meta_dia: fixa ?? porDia(min), meta_fixa: fixa != null, jornada_propria: Boolean(jornadas[nomeChave(usuario)]) };
+  };
   return {
-    padrao: cfg.padrao ?? auto, padrao_manual: cfg.padrao != null, automatica,
-    base: `média do time de Escrita Fiscal por pessoa/dia nos últimos ${DIAS_BASE_META} dias`,
-    escrita_fiscal: membros, pessoas, equipeDe,
-    // meta só para o time de Escrita Fiscal
-    metaDe: (usuario) => (equipeDe(usuario) === 'fiscal' ? pessoas[usuario] ?? cfg.padrao ?? auto : null),
+    parametros: par, minutos_jornada: minutosPadrao, padrao,
+    calculo: `${Math.floor(minutosPadrao / 60)}h${String(minutosPadrao % 60).padStart(2, '0')} (${par.entrada}–${par.saida} − ${par.intervalo_min} min) × ${par.produtividade}% ÷ ${par.minutos_por_nota} min por nota`,
+    escrita_fiscal: membros, jornadas: cfg.jornadas ?? JORNADAS_PADRAO, pessoas: cfg.pessoas ?? {},
+    equipeDe, jornadaDe,
+    metaDe: (usuario) => jornadaDe(usuario)?.meta_dia ?? null,
+    /** Meta da pessoa numa data (0 se ela não trabalha nesse dia da semana). */
+    metaNoDia: (usuario, dia) => {
+      const j = jornadaDe(usuario);
+      if (!j) return 0;
+      return j.dias_semana.includes(new Date(`${dia}T12:00:00Z`).getUTCDay()) ? j.meta_dia : 0;
+    },
   };
 }
+export const rotuloDias = (lista) => lista.map((d) => DIAS_SEMANA[d]).join(', ');
 
 /**
- * Grava metas manuais e o time.
- * padrao: número ou null (volta para a automática); pessoas: { nome: número|null }; escrita_fiscal: [nomes]
+ * Grava a configuração das metas. Campos opcionais:
+ *   parametros: { minutos_por_nota, entrada, saida, intervalo_min, produtividade, dias_semana }
+ *   escrita_fiscal: [nomes]
+ *   jornadas: { nome: { minutos_dia, dias_semana } | null }   (null = jornada padrão)
+ *   pessoas: { nome: número | null }                           (meta fixa; null = pela jornada)
  */
-export function salvarMetas({ padrao, pessoas, escrita_fiscal: time } = {}) {
+export function salvarMetas({ parametros, escrita_fiscal: time, jornadas, pessoas } = {}) {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
-  const num = (v) => (v === null || v === '' || v === undefined ? null : Number(v) > 0 ? Math.round(Number(v) * 10) / 10 : null);
-  if (padrao !== undefined) cfg.padrao = num(padrao);
+  const num = (v) => (v === null || v === '' || v === undefined || !(Number(v) > 0) ? null : Math.round(Number(v) * 10) / 10);
+  const dias = (l) => (Array.isArray(l) ? [...new Set(l.map(Number).filter((d) => d >= 0 && d <= 6))].sort() : null);
+  if (parametros) {
+    const p = { ...PARAMETROS_PADRAO, ...(cfg.parametros ?? {}) };
+    if (num(parametros.minutos_por_nota)) p.minutos_por_nota = num(parametros.minutos_por_nota);
+    if (num(parametros.produtividade)) p.produtividade = Math.min(100, num(parametros.produtividade));
+    if (/^\d{1,2}:\d{2}$/.test(parametros.entrada ?? '')) p.entrada = parametros.entrada;
+    if (/^\d{1,2}:\d{2}$/.test(parametros.saida ?? '')) p.saida = parametros.saida;
+    if (parametros.intervalo_min !== undefined && Number(parametros.intervalo_min) >= 0) p.intervalo_min = Number(parametros.intervalo_min);
+    if (dias(parametros.dias_semana)?.length) p.dias_semana = dias(parametros.dias_semana);
+    cfg.parametros = p;
+  }
+  if (Array.isArray(time)) cfg.escrita_fiscal = [...new Set(time.map((n) => String(n).trim()).filter(Boolean))];
+  if (jornadas) {
+    cfg.jornadas = { ...(cfg.jornadas ?? JORNADAS_PADRAO) };
+    for (const [nome, j] of Object.entries(jornadas)) {
+      const min = num(j?.minutos_dia), ds = dias(j?.dias_semana);
+      if (!j || (!min && !ds?.length)) delete cfg.jornadas[nome];
+      else cfg.jornadas[nome] = { ...(min ? { minutos_dia: min } : {}), ...(ds?.length ? { dias_semana: ds } : {}) };
+    }
+  }
   cfg.pessoas = { ...(cfg.pessoas ?? {}) };
   for (const [nome, v] of Object.entries(pessoas ?? {})) {
     if (num(v) == null) delete cfg.pessoas[nome]; else cfg.pessoas[nome] = num(v);
   }
-  if (Array.isArray(time)) cfg.escrita_fiscal = [...new Set(time.map((n) => String(n).trim()).filter(Boolean))];
+  delete cfg.padrao; // meta padrão manual antiga: agora vem da jornada
   setConfig('metas_lancamento', cfg);
-  const { equipeDe, metaDe, ...r } = metasLancamento();
+  const { equipeDe, jornadaDe, metaDe, metaNoDia, ...r } = metasLancamento();
   return r;
 }
 
@@ -148,8 +169,14 @@ export async function painelLancamentos(filtros = {}) {
   // (a selecionada fica destacada) e permitir trocar a escolha.
   const escolhidas = String(filtros.situacoes ?? 'todas').split(',').map((s) => s.trim()).filter(Boolean);
   const filtroHora = filtros.hora !== undefined && filtros.hora !== '' ? Number(filtros.hora) : null;
-  const metas = metasLancamento(await historicoPorPessoa());
-  const { metaDe, equipeDe } = metas;
+  const metas = metasLancamento();
+  const { metaDe, equipeDe, jornadaDe, metaNoDia } = metas;
+  // Dias do período até hoje (a meta "até hoje" não cobra dias que ainda não chegaram)
+  const hojeIso = new Date().toLocaleDateString('sv-SE');
+  const diasPeriodo = [];
+  for (let d = new Date(`${periodo.de}T12:00:00Z`); d.toISOString().slice(0, 10) <= periodo.ate; d.setUTCDate(d.getUTCDate() + 1)) diasPeriodo.push(d.toISOString().slice(0, 10));
+  const diasAteHoje = diasPeriodo.filter((d) => d <= hojeIso);
+  const metaPessoa = (usuario, lista) => lista.reduce((s, d) => s + metaNoDia(usuario, d), 0);
   const testes = {
     equipe: (i) => !filtros.equipe || equipeDe(i.usuario) === filtros.equipe,
     usuario: (i) => !filtros.usuario || i.usuario === filtros.usuario,
@@ -174,7 +201,8 @@ export async function painelLancamentos(filtros = {}) {
     return {
       dia: d, notas: doDia.length, valor: soma(doDia, (i) => i.valor), pessoas: quem.length,
       // meta do dia = soma das metas de quem lançou nesse dia
-      meta: metas.padrao != null ? Math.round(quem.reduce((s, u) => s + (metaDe(u) ?? 0), 0) * 10) / 10 : null,
+      // capacidade do time nesse dia (todos do time que trabalham nesse dia da semana)
+      meta: metas.escrita_fiscal.reduce((s, u) => s + metaNoDia(u, d), 0) || null,
     };
   });
   const paraHoras = semFiltro('hora');
@@ -194,12 +222,17 @@ export async function painelLancamentos(filtros = {}) {
     const fmtHora = (v) => (v == null ? null : `${String(Math.floor(v)).padStart(2, '0')}:${String(Math.round((v % 1) * 60)).padStart(2, '0')}`);
     const mediaDia = Math.round((p.notas / p.dias.size) * 10) / 10;
     const meta = metaDe(p.usuario);
+    const jornada = jornadaDe(p.usuario);
+    const esperado = meta != null ? metaPessoa(p.usuario, diasAteHoje) : null;
     return {
       usuario: p.usuario, notas: p.notas, valor: Math.round(p.valor * 100) / 100,
       dias_ativos: p.dias.size, media_dia: mediaDia,
       equipe: equipeDe(p.usuario),
-      meta_dia: meta, meta_manual: meta != null && metas.pessoas[p.usuario] != null,
-      pct_meta: meta ? Math.round((mediaDia / meta) * 100) : null,
+      meta_dia: meta, meta_manual: Boolean(jornada?.meta_fixa),
+      jornada: jornada ? { minutos_dia: jornada.minutos_dia, dias: rotuloDias(jornada.dias_semana), propria: jornada.jornada_propria } : null,
+      // meta até hoje = soma da meta de cada dia útil dela no período até hoje; % = lançado ÷ essa meta
+      meta_ate_hoje: esperado, meta_periodo: meta != null ? metaPessoa(p.usuario, diasPeriodo) : null,
+      pct_meta: esperado ? Math.round((p.notas / esperado) * 100) : null,
       dias_na_meta: meta ? [...p.dias.values()].filter((n) => n >= meta).length : null,
       empresas: p.empresas.size,
       pct_com_xml: Math.round((p.com_xml / p.notas) * 100),
@@ -248,7 +281,11 @@ export async function painelLancamentos(filtros = {}) {
       chave, rotulo, notas: lista.length, valor: soma(lista, (i) => i.valor),
       pessoas: new Set(lista.map((i) => i.usuario)).size,
       media_pessoa_dia: pd ? Math.round((lista.length / pd) * 10) / 10 : null,
-      meta: chave === 'fiscal' ? metas.padrao : null,
+      ...(chave === 'fiscal' ? {
+        meta_dia_pessoa: metas.padrao,
+        meta_periodo: metas.escrita_fiscal.reduce((s, u) => s + metaPessoa(u, diasPeriodo), 0),
+        meta_ate_hoje: metas.escrita_fiscal.reduce((s, u) => s + metaPessoa(u, diasAteHoje), 0),
+      } : {}),
     };
   });
 
@@ -256,7 +293,12 @@ export async function painelLancamentos(filtros = {}) {
     periodo, base, situacoes: escolhidas.join(','), situacoes_disponiveis: SITUACOES,
     empresa: filtros.empresa ?? '',
     filtros_ativos: { equipe: filtros.equipe || null, usuario: filtros.usuario || null, empresa: filtros.empresa || null, dia: filtros.dia || null, hora: filtroHora, origem: filtros.origem || null },
-    metas: { padrao: metas.padrao, automatica: metas.automatica, padrao_manual: metas.padrao_manual, base: metas.base, escrita_fiscal: metas.escrita_fiscal },
+    metas: {
+      padrao: metas.padrao, calculo: metas.calculo, parametros: metas.parametros, minutos_jornada: metas.minutos_jornada,
+      escrita_fiscal: metas.escrita_fiscal, jornadas: metas.jornadas, pessoas: metas.pessoas,
+      // time completo com a jornada de cada um (inclusive quem não lançou nada no período)
+      time: metas.escrita_fiscal.map((u) => ({ usuario: u, ...jornadaDe(u), dias: rotuloDias(jornadaDe(u).dias_semana), meta_periodo: metaPessoa(u, diasPeriodo), meta_ate_hoje: metaPessoa(u, diasAteHoje) })),
+    },
     por_equipe: porEquipe,
     empresas_disponiveis: [...porEmpresa].sort((a, b) => a.rotulo.localeCompare(b.rotulo, 'pt-BR')),
     indicadores: {
