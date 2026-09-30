@@ -372,6 +372,8 @@ export default function Lancamentos() {
             </ResponsiveContainer>
           </Cartao>
 
+          <HistoricoMensal />
+
           <Cartao titulo="Notas lançadas" sub="segue os filtros acima · clique na pessoa ou na empresa para filtrar" semPadding
             acoes={<BotaoExportar titulo="Notas lançadas" linhas={dados.itens} colunas={COLUNAS_NOTAS} />}>
             <div className="linha pequeno" style={{ padding: '8px 12px', borderBottom: '1px solid var(--borda)' }}>
@@ -405,6 +407,79 @@ export default function Lancamentos() {
         </>
       )}
     </>
+  );
+}
+
+const NOMES_MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const mesCurto = (m) => `${NOMES_MES[Number(String(m).slice(5, 7)) - 1]}/${String(m).slice(2, 4)}`;
+
+/** Últimos 12 meses do time × meta: serve para conferir se a meta (minutos por nota) é coerente. */
+function HistoricoMensal() {
+  const { dados, erro, carregando } = useDados(() => api.get('/lancamentos/historico'), [], { automatico: false, memoria: 'lancamentos-historico' });
+  if (erro) return <Erro erro={erro} />;
+  if (!dados) return carregando ? <Cartao titulo="Histórico mensal do time"><Carregando /></Cartao> : null;
+  const m = dados.media_meses_completos;
+  const par = dados.parametros;
+  return (
+    <Cartao titulo="Histórico mensal do time × meta" sub={`últimos 12 meses · pela data do lançamento · meta atual ${dados.calculo}`}>
+      {m.meses > 0 && (
+        <div className="aviso" style={{ marginBottom: 12 }}>
+          Nos últimos <strong>{m.meses}</strong> meses completos, o time de Escrita Fiscal lançou em média <strong>{numero(m.notas_time)}</strong> notas por mês
+          ({numero(m.media_pessoa_dia, 1)} por pessoa/dia), <strong>{numero(m.pct_meta)}%</strong> da meta atual.
+          Na prática isso dá <strong>{numero(m.minutos_por_nota_real, 1)} min por nota</strong> (com {par.produtividade}% do tempo produtivo); a meta usa <strong>{numero(par.minutos_por_nota, 1)} min</strong>.
+          {m.minutos_por_nota_real > par.minutos_por_nota * 1.15 ? ' A meta está acima do que o time vem entregando.'
+            : m.minutos_por_nota_real < par.minutos_por_nota * 0.85 ? ' O time já entrega mais do que a meta pede: dá para apertar.' : ' A meta está coerente com o histórico.'}
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={240}>
+        <ComposedChart data={dados.meses.map((x) => ({ ...x, rotulo: mesCurto(x.mes) + (x.parcial ? '*' : '') }))} margin={{ left: 0, right: 12, top: 22 }}>
+          <CartesianGrid vertical={false} stroke="var(--grade)" />
+          <XAxis dataKey="rotulo" tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} />
+          <YAxis tick={eixo} axisLine={false} tickLine={false} width={52} />
+          <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (() => {
+            const x = payload[0].payload;
+            return (
+              <div className="tooltip-grafico">
+                <div className="t">{x.rotulo}{x.parcial ? ' (até hoje)' : ''}</div>
+                <div>Time: <strong>{numero(x.notas_time)}</strong> · meta {numero(x.meta)} ({numero(x.pct_meta ?? 0)}%)</div>
+                <div>Outros: {numero(x.notas_outros)}</div>
+                <div className="muted pequeno">{x.pessoas_time} pessoa(s) · {numero(x.media_pessoa_dia ?? 0, 1)}/pessoa/dia · {numero(x.minutos_por_nota_real ?? 0, 1)} min/nota</div>
+              </div>
+            );
+          })() : null)} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar isAnimationActive={false} dataKey="notas_time" name="Escrita Fiscal" stackId="n" fill="var(--serie-1)" maxBarSize={36}>
+            <LabelList dataKey="notas_time" position="insideTop" style={{ ...rotulo, fill: '#fff' }} formatter={(v) => (v ? numero(v) : '')} />
+          </Bar>
+          <Bar isAnimationActive={false} dataKey="notas_outros" name="Outros" stackId="n" fill="var(--texto-3)" fillOpacity={0.35} radius={[4, 4, 0, 0]} maxBarSize={36} />
+          <Line isAnimationActive={false} type="monotone" dataKey="meta" name="Meta do time" stroke="var(--status-critico)" strokeDasharray="5 4" strokeWidth={2} dot={{ r: 3 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div className="tabela-wrap" style={{ marginTop: 8 }}>
+        <table className="tabela" style={{ fontSize: 12 }}>
+          <thead><tr><th>Mês</th><th className="num">Time</th><th className="num">Outros</th><th className="num">Pessoas</th><th className="num">Pessoa-dias</th><th className="num">Média/pessoa/dia</th><th className="num">Meta</th><th className="num">% meta</th><th className="num">Min/nota real</th></tr></thead>
+          <tbody>
+            {[...dados.meses].reverse().map((x) => (
+              <tr key={x.mes}>
+                <td>{mesCurto(x.mes)}{x.parcial ? <span className="muted"> (até hoje)</span> : ''}</td>
+                <td className="num"><strong>{numero(x.notas_time)}</strong></td>
+                <td className="num muted">{numero(x.notas_outros)}</td>
+                <td className="num" title={x.time.map((p) => `${p.usuario}: ${p.notas} em ${p.dias} dia(s)`).join('\n')}>{x.pessoas_time}</td>
+                <td className="num">{numero(x.pessoa_dias)}</td>
+                <td className="num">{numero(x.media_pessoa_dia ?? 0, 1)}</td>
+                <td className="num">{numero(x.meta)}</td>
+                <td className="num">{x.pct_meta != null ? <span className={`badge ${x.pct_meta >= 100 ? 'sev-ok' : x.pct_meta >= 80 ? 'sev-alerta' : 'sev-erro'}`}>{numero(x.pct_meta)}%</span> : '—'}</td>
+                <td className="num">{numero(x.minutos_por_nota_real ?? 0, 1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted pequeno" style={{ marginBottom: 0 }}>
+        Meta do mês = dias úteis de cada pessoa do time que lançou no mês × meta diária dela (sem descontar feriados e férias).
+        Min/nota real = tempo produtivo nos dias em que cada um lançou ÷ notas do time. Passe o mouse em “Pessoas” para ver quem entrou na conta.
+      </p>
+    </Cartao>
   );
 }
 

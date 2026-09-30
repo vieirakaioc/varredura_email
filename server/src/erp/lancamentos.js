@@ -323,3 +323,70 @@ export async function painelLancamentos(filtros = {}) {
     total_itens: itens.length,
   };
 }
+
+// ------------------------------------------------------------------ histórico mensal × meta
+// Para conferir se a meta é coerente com o que o time realmente lança, mês a mês.
+const SQL_MENSAL = `SELECT YEAR(n.DATGER) AS ANO, MONTH(n.DATGER) AS MES, n.USUGER, MAX(u.NOMUSU) AS NOMUSU,
+    COUNT(*) AS NOTAS, COUNT(DISTINCT n.DATGER) AS DIAS
+  FROM E440NFC n
+  LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
+  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'
+  GROUP BY YEAR(n.DATGER), MONTH(n.DATGER), n.USUGER`;
+
+/**
+ * Últimos 12 meses (pela data do lançamento, sem canceladas): notas do time de Escrita Fiscal e dos outros,
+ * pessoas e dias trabalhados, meta com os parâmetros atuais e o tempo real por nota que o volume representa.
+ * A meta de cada mês considera só quem do time lançou alguma nota naquele mês (quem ainda não estava no time
+ * ou estava de férias o mês todo não entra).
+ */
+export async function historicoMensal({ forcar } = {}) {
+  if (!seniorConfigurado()) throw new Error('Senior não configurado');
+  const hoje = new Date();
+  const desde = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() - 11, 1));
+  const linhas = await comCache(`lancamentos-mensal|${hoje.toLocaleDateString('sv-SE')}`, forcar === '1' ? 0 : 3600_000,
+    () => consultar(SQL_MENSAL, desde, { ate: hoje }));
+  const metas = metasLancamento();
+  const par = metas.parametros;
+  const hojeIso = hoje.toLocaleDateString('sv-SE');
+  const porMes = new Map();
+  for (const l of linhas) {
+    const mes = `${l.ANO}-${String(l.MES).padStart(2, '0')}`;
+    const m = porMes.get(mes) ?? { mes, pessoas: [] };
+    m.pessoas.push({ usuario: String(l.NOMUSU ?? '').trim() || `Usuário ${l.USUGER}`, notas: Number(l.NOTAS), dias: Number(l.DIAS) });
+    porMes.set(mes, m);
+  }
+  const meses = [...porMes.values()].sort((a, b) => a.mes.localeCompare(b.mes)).map((m) => {
+    const time = m.pessoas.filter((p) => metas.equipeDe(p.usuario) === 'fiscal');
+    const outros = m.pessoas.filter((p) => metas.equipeDe(p.usuario) !== 'fiscal');
+    const [ano, mm] = m.mes.split('-').map(Number);
+    const dias = [];
+    for (let d = new Date(Date.UTC(ano, mm - 1, 1)); d.getUTCMonth() === mm - 1; d.setUTCDate(d.getUTCDate() + 1)) dias.push(d.toISOString().slice(0, 10));
+    const diasAteHoje = dias.filter((d) => d <= hojeIso);
+    const notasTime = time.reduce((s, p) => s + p.notas, 0);
+    // meta cheia: todos os dias úteis do mês (até hoje, no mês corrente) de quem do time lançou no mês
+    const meta = time.reduce((s, p) => s + diasAteHoje.reduce((x, d) => x + metas.metaNoDia(p.usuario, d), 0), 0);
+    // minutos produtivos nos dias em que cada pessoa de fato lançou → tempo real gasto por nota
+    const minutosProdutivos = time.reduce((s, p) => s + p.dias * (metas.jornadaDe(p.usuario).minutos_dia * (Number(par.produtividade) / 100)), 0);
+    const pessoaDias = time.reduce((s, p) => s + p.dias, 0);
+    return {
+      mes: m.mes, parcial: diasAteHoje.length < dias.length,
+      notas_time: notasTime, notas_outros: outros.reduce((s, p) => s + p.notas, 0),
+      pessoas_time: time.length, pessoa_dias: pessoaDias,
+      media_pessoa_dia: pessoaDias ? Math.round((notasTime / pessoaDias) * 10) / 10 : null,
+      meta, pct_meta: meta ? Math.round((notasTime / meta) * 100) : null,
+      minutos_por_nota_real: notasTime ? Math.round((minutosProdutivos / notasTime) * 10) / 10 : null,
+      time: time.sort((a, b) => b.notas - a.notas),
+    };
+  });
+  const completos = meses.filter((m) => !m.parcial && m.notas_time > 0);
+  const media = (f) => (completos.length ? Math.round((completos.reduce((s, m) => s + f(m), 0) / completos.length) * 10) / 10 : null);
+  return {
+    parametros: par, meta_dia_padrao: metas.padrao, calculo: metas.calculo,
+    meses,
+    media_meses_completos: {
+      meses: completos.length, notas_time: media((m) => m.notas_time), notas_outros: media((m) => m.notas_outros),
+      media_pessoa_dia: media((m) => m.media_pessoa_dia ?? 0), pct_meta: media((m) => m.pct_meta ?? 0),
+      minutos_por_nota_real: media((m) => m.minutos_por_nota_real ?? 0),
+    },
+  };
+}
