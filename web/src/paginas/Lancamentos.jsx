@@ -116,6 +116,10 @@ export default function Lancamentos() {
   );
   const [horaDestaque, setHoraDestaque] = useState(null);
   const [mostrar, setMostrar] = useState(300);
+  // Busca na tabela de notas lançadas (sobre as notas já filtradas pelos gráficos)
+  const [buscaNotas, setBuscaNotas] = useState('');
+  const [situacaoNotas, setSituacaoNotas] = useState('');
+  const [origemNotas, setOrigemNotas] = useState('');
   const [editandoMetas, setEditandoMetas] = useState(false);
   // Blocos do ranking recolhidos (lembrado neste navegador); "Outros" começa fechado por ser a lista maior
   const [recolhidos, setRecolhidos] = useState(() => {
@@ -129,6 +133,23 @@ export default function Lancamentos() {
   });
   const k = dados?.indicadores;
   const fiscais = (dados?.pessoas ?? []).filter((p) => p.equipe === 'fiscal');
+  const notasFiltradas = (() => {
+    const lista = dados?.itens ?? [];
+    const termo = buscaNotas.trim().toLowerCase();
+    const digitos = termo.replace(/\D/g, '');
+    return lista.filter((l) => {
+      if (situacaoNotas && l.situacao !== situacaoNotas) return false;
+      if (origemNotas && (origemNotas === 'xml') !== Boolean(l.com_xml)) return false;
+      if (!termo) return true;
+      // número da nota, fornecedor, pessoa, empresa (nome ou código emp/fil), série ou valor
+      const texto = `${l.numero} ${l.serie ?? ''} ${l.fornecedor ?? ''} ${l.usuario} ${l.empresa} ${l.codemp}/${l.codfil}`.toLowerCase();
+      if (texto.includes(termo)) return true;
+      if (digitos && String(l.numero) === digitos) return true;
+      const valor = termo.replace(/r\$|\s|\./g, '').replace(',', '.');
+      return Number(valor) > 0 && l.valor != null && Math.abs(l.valor - Number(valor)) < 0.01;
+    });
+  })();
+  const buscandoNotas = Boolean(buscaNotas.trim() || situacaoNotas || origemNotas);
   const maxCalor = Math.max(1, ...(dados?.mapa_calor ?? []).flatMap((p) => p.horas));
 
   return (
@@ -435,16 +456,36 @@ export default function Lancamentos() {
           <HistoricoMensal />
 
           <Cartao titulo="Notas lançadas" sub="segue os filtros acima · clique na pessoa ou na empresa para filtrar" semPadding
-            acoes={<BotaoExportar titulo="Notas lançadas" linhas={dados.itens} colunas={COLUNAS_NOTAS} />}>
-            <div className="linha pequeno" style={{ padding: '8px 12px', borderBottom: '1px solid var(--borda)' }}>
-              <span className="muted">{numero(dados.total_itens)} nota(s) · {brl(k.valor)}</span>
+            acoes={<BotaoExportar titulo="Notas lançadas" linhas={notasFiltradas} colunas={COLUNAS_NOTAS} />}>
+            <div className="linha" style={{ padding: '10px 16px', borderBottom: '1px solid var(--borda)', gap: 8 }}>
+              <input type="search" value={buscaNotas} onChange={(e) => { setBuscaNotas(e.target.value); setMostrar(300); }}
+                placeholder="Buscar nota, fornecedor, pessoa, empresa ou valor" aria-label="Buscar notas lançadas" style={{ width: 340 }} />
+              <select value={situacaoNotas} onChange={(e) => setSituacaoNotas(e.target.value)} aria-label="Situação">
+                <option value="">Todas as situações</option>
+                {Object.entries(dados.situacoes_disponiveis ?? {}).map(([c, r]) => <option key={c} value={c}>{r}</option>)}
+              </select>
+              <select value={origemNotas} onChange={(e) => setOrigemNotas(e.target.value)} aria-label="Origem">
+                <option value="">XML e digitadas</option>
+                <option value="xml">A partir do XML</option>
+                <option value="manual">Digitadas</option>
+              </select>
+              {buscandoNotas && <button className="btn pequeno ghost" onClick={() => { setBuscaNotas(''); setSituacaoNotas(''); setOrigemNotas(''); }}>Limpar busca</button>}
+              <span className="espaco" />
+              <span className="muted pequeno">
+                {buscandoNotas
+                  ? <>{numero(notasFiltradas.length)} de {numero(dados.total_itens)} nota(s) · {brl(notasFiltradas.reduce((t, l) => t + (l.valor ?? 0), 0))}</>
+                  : <>{numero(dados.total_itens)} nota(s) · {brl(k.valor)}</>}
+              </span>
             </div>
-            {!dados.itens.length ? <div className="vazio" style={{ padding: 30 }}>Nenhuma nota com estes filtros.</div> : (
+            {dados.total_itens > dados.itens.length && buscandoNotas && (
+              <div className="aviso atencao pequeno" style={{ margin: '8px 16px 0' }}>A busca olha as {numero(dados.itens.length)} notas mais recentes do período. Para achar as mais antigas, filtre o período ou a pessoa acima.</div>
+            )}
+            {!notasFiltradas.length ? <div className="vazio" style={{ padding: 30 }}>{buscandoNotas ? 'Nenhuma nota encontrada nesta busca.' : 'Nenhuma nota com estes filtros.'}</div> : (
               <div className="tabela-wrap" style={{ maxHeight: 520 }}>
                 <table className="tabela">
                   <thead><tr><th>Lançada em</th><th>Hora</th><th>Pessoa</th><th>Empresa</th><th>Nota</th><th>Fornecedor</th><th title="data de entrada · dias entre o XML e o lançamento">Entrada</th><th className="num">Valor</th><th>Situação</th><th>Origem</th></tr></thead>
                   <tbody>
-                    {dados.itens.slice(0, mostrar).map((l) => (
+                    {notasFiltradas.slice(0, mostrar).map((l) => (
                       <tr key={`${l.codemp}|${l.codfil}|${l.numero}|${l.serie}|${l.fornecedor}|${l.geracao}|${l.horario}`}>
                         <td className="nowrap muted" style={{ cursor: 'pointer' }} onClick={() => alternar('dia', dados.base === 'entrada' ? l.entrada : l.geracao)}>{data(l.geracao)}</td>
                         <td className="nowrap clicavel" style={{ cursor: 'pointer' }} onClick={() => l.hora != null && alternar('hora', l.hora)}><strong>{l.horario ?? '—'}</strong></td>
@@ -462,7 +503,7 @@ export default function Lancamentos() {
                     ))}
                   </tbody>
                 </table>
-                {dados.itens.length > mostrar && <div className="paginacao"><span>Exibindo {numero(mostrar)} de {numero(dados.itens.length)}</span><button className="btn pequeno" onClick={() => setMostrar((m) => m + 500)}>Mostrar mais</button></div>}
+                {notasFiltradas.length > mostrar && <div className="paginacao"><span>Exibindo {numero(mostrar)} de {numero(notasFiltradas.length)}</span><button className="btn pequeno" onClick={() => setMostrar((m) => m + 500)}>Mostrar mais</button></div>}
               </div>
             )}
           </Cartao>
