@@ -18,6 +18,7 @@ const mesesDisponiveis = () => Array.from({ length: 12 }, (_, i) => {
 
 const COLUNAS_PESSOAS = [
   { titulo: 'Pessoa', valor: (p) => p.usuario },
+  { titulo: 'Bloco', valor: (p) => (p.equipe === 'fiscal' ? 'Escrita Fiscal' : 'Outros') },
   { titulo: 'Notas lançadas', tipo: 'numero', valor: (p) => p.notas },
   { titulo: 'Hoje', tipo: 'numero', valor: (p) => p.hoje },
   { titulo: 'Dias ativos', tipo: 'numero', valor: (p) => p.dias_ativos },
@@ -48,7 +49,7 @@ const COLUNAS_NOTAS = [
   { titulo: 'Origem', valor: (l) => (l.com_xml ? 'XML recebido' : 'Digitada') },
   { titulo: 'Dias até lançar', tipo: 'numero', valor: (l) => l.dias_ate_lancar },
 ];
-const ROTULO_FILTRO = { dia: 'Dia', hora: 'Hora', usuario: 'Pessoa', empresa: 'Empresa', origem: 'Origem' };
+const ROTULO_FILTRO = { equipe: 'Bloco', dia: 'Dia', hora: 'Hora', usuario: 'Pessoa', empresa: 'Empresa', origem: 'Origem' };
 
 /** Cor da célula do mapa de calor conforme a intensidade. */
 const corCalor = (v, max) => (v === 0 ? 'var(--superficie-2)' : `color-mix(in srgb, var(--serie-1) ${Math.max(12, Math.round((v / max) * 100))}%, var(--superficie))`);
@@ -63,6 +64,7 @@ export default function Lancamentos() {
     empresa: params.get('empresa') ?? '',
     // filtros em cascata (clique nos gráficos)
     dia: params.get('dia') ?? '', hora: params.get('hora') ?? '', origem: params.get('origem') ?? '',
+    equipe: params.get('equipe') ?? '',
   };
   // "periodo" é o marcador de "sem mês"; o valor vazio some da URL e voltaria para o mês vigente
   const mes = f.mes === 'periodo' ? '' : f.mes;
@@ -77,17 +79,18 @@ export default function Lancamentos() {
   const setFiltro = (k, v) => setFiltros({ [k]: v });
   // clicar de novo no que já está filtrado tira o filtro
   const alternar = (k, v) => setFiltro(k, String(f[k]) === String(v) ? '' : v);
-  const ativos = ['dia', 'hora', 'usuario', 'empresa', 'origem'].filter((c) => f[c] !== '');
+  const ativos = ['equipe', 'dia', 'hora', 'usuario', 'empresa', 'origem'].filter((c) => f[c] !== '');
   const { permissoes } = useAuth();
   const podeMeta = permissoes.includes('administrar');
   const { dados, erro, carregando, recarregar, atualizar } = useDados(
-    ({ forcar } = {}) => api.get(`/lancamentos${qs({ forcar: forcar ? '1' : '', mes, dias: mes ? '' : f.dias, usuario: f.usuario, base: f.base, situacoes: f.situacoes, empresa: f.empresa, dia: f.dia, hora: f.hora, origem: f.origem })}`),
-    [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa, f.dia, f.hora, f.origem], { automatico: false, memoria: 'lancamentos' },
+    ({ forcar } = {}) => api.get(`/lancamentos${qs({ forcar: forcar ? '1' : '', mes, dias: mes ? '' : f.dias, usuario: f.usuario, base: f.base, situacoes: f.situacoes, empresa: f.empresa, dia: f.dia, hora: f.hora, origem: f.origem, equipe: f.equipe })}`),
+    [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa, f.dia, f.hora, f.origem, f.equipe], { automatico: false, memoria: 'lancamentos' },
   );
   const [horaDestaque, setHoraDestaque] = useState(null);
   const [mostrar, setMostrar] = useState(300);
   const [editandoMetas, setEditandoMetas] = useState(false);
   const k = dados?.indicadores;
+  const fiscais = (dados?.pessoas ?? []).filter((p) => p.equipe === 'fiscal');
   const maxCalor = Math.max(1, ...(dados?.mapa_calor ?? []).flatMap((p) => p.horas));
 
   return (
@@ -139,10 +142,10 @@ export default function Lancamentos() {
           <strong className="muted">Filtrando por:</strong>
           {ativos.map((c) => (
             <button key={c} className="btn pequeno ghost" onClick={() => setFiltro(c, '')} title="Tirar este filtro">
-              {ROTULO_FILTRO[c]}: <strong>{c === 'dia' ? data(f.dia) : c === 'hora' ? `${String(f.hora).padStart(2, '0')}h` : c === 'origem' ? (f.origem === 'xml' ? 'XML recebido' : 'Digitada') : f[c]}</strong> ✕
+              {ROTULO_FILTRO[c]}: <strong>{c === 'dia' ? data(f.dia) : c === 'hora' ? `${String(f.hora).padStart(2, '0')}h` : c === 'origem' ? (f.origem === 'xml' ? 'XML recebido' : 'Digitada') : c === 'equipe' ? (f.equipe === 'fiscal' ? 'Escrita Fiscal' : 'Outros') : f[c]}</strong> ✕
             </button>
           ))}
-          <button className="btn pequeno" onClick={() => setFiltros({ dia: '', hora: '', usuario: '', empresa: '', origem: '' })}>Limpar filtros</button>
+          <button className="btn pequeno" onClick={() => setFiltros({ equipe: '', dia: '', hora: '', usuario: '', empresa: '', origem: '' })}>Limpar filtros</button>
           {carregando && <span className="muted">atualizando…</span>}
         </div>
       )}
@@ -156,10 +159,16 @@ export default function Lancamentos() {
             <Kpi rotulo="Pico do dia" valor={k.pico_hora?.rotulo ?? '—'} detalhe={`${numero(k.pico_hora?.notas ?? 0)} notas nessa hora`} cor="var(--pend)" />
             <Kpi rotulo="Prazo médio do XML" valor={`${numero(k.prazo_medio ?? 0, 1)} dia(s)`} detalhe={`${numero(k.no_mesmo_dia ?? 0)}% lançadas no mesmo dia`} cor="var(--ok)" />
             <Kpi rotulo="Equipe no período" valor={numero(k.pessoas)} detalhe={`${numero(k.pct_com_xml)}% a partir do XML recebido`} />
-            <Kpi rotulo="Média por pessoa/dia" valor={numero(k.media_pessoa_dia ?? 0, 1)}
-              detalhe={dados.metas.padrao != null ? `meta: ${numero(dados.metas.padrao, 1)}/dia${dados.metas.padrao_manual ? '' : ' (automática)'}` : 'sem meta'}
-              cor={dados.metas.padrao != null && (k.media_pessoa_dia ?? 0) >= dados.metas.padrao ? 'var(--status-bom)' : 'var(--status-atencao)'}
-              titulo={`Notas por pessoa em cada dia trabalhado. Meta automática = ${dados.metas.base}${dados.metas.automatica != null ? ` (${numero(dados.metas.automatica, 1)})` : ''}`} />
+{(() => {
+              const fiscal = dados.por_equipe.find((e) => e.chave === 'fiscal');
+              return (
+                <Kpi rotulo="Escrita Fiscal: média por pessoa/dia" valor={numero(fiscal?.media_pessoa_dia ?? 0, 1)}
+                  detalhe={dados.metas.padrao != null ? `meta: ${numero(dados.metas.padrao, 1)}/dia${dados.metas.padrao_manual ? '' : ' (automática)'}` : 'sem meta'}
+                  cor={dados.metas.padrao != null && (fiscal?.media_pessoa_dia ?? 0) >= dados.metas.padrao ? 'var(--status-bom)' : 'var(--status-atencao)'}
+                  onClick={() => alternar('equipe', 'fiscal')}
+                  titulo={`Notas por pessoa do time em cada dia trabalhado. Meta automática = ${dados.metas.base}${dados.metas.automatica != null ? ` (${numero(dados.metas.automatica, 1)})` : ''}. Clique para ver só o time.`} />
+              );
+            })()}
           </div>
 
           <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
@@ -250,28 +259,47 @@ export default function Lancamentos() {
                 <BotaoExportar titulo="Lançamentos por pessoa" linhas={dados.pessoas} colunas={COLUNAS_PESSOAS} />
               </div>}>
               {editandoMetas && <EditorMetas metas={dados.metas} pessoas={dados.pessoas} aoSalvar={atualizar} />}
-              <div className="tabela-wrap">
-                <table className="tabela">
-                  <thead><tr><th>Pessoa</th><th className="num">Notas</th><th className="num">Hoje</th><th className="num">Média/dia</th><th className="num">Meta/dia</th><th className="num">% meta</th><th>Jornada</th><th className="num">Do XML</th><th className="num">Prazo</th><th className="num">Valor</th></tr></thead>
-                  <tbody>
-                    {dados.pessoas.map((p, i) => (
-                      <tr key={p.usuario} className="clicavel" style={{ background: f.usuario === p.usuario ? 'var(--superficie-3)' : undefined }} onClick={() => alternar('usuario', p.usuario)}>
-                        <td><strong>{i + 1}º</strong> {p.usuario}<div className="muted pequeno">{p.dias_ativos} dia(s) · {p.empresas} empresa(s)</div></td>
-                        <td className="num"><strong>{numero(p.notas)}</strong></td>
-                        <td className="num">{p.hoje ? numero(p.hoje) : <span className="muted">—</span>}</td>
-                        <td className="num">{numero(p.media_dia, 1)}</td>
-                        <td className="num" title={p.meta_manual ? 'Meta manual' : 'Meta padrão'}>{p.meta_dia != null ? numero(p.meta_dia, 1) : '—'}{p.meta_manual ? ' ✎' : ''}</td>
-                        <td className="num">{p.pct_meta != null ? <span className={`badge ${p.pct_meta >= 100 ? 'sev-ok' : p.pct_meta >= 80 ? 'sev-alerta' : 'sev-erro'}`}>{numero(p.pct_meta)}%</span> : '—'}
-                          {p.dias_na_meta != null && <div className="muted pequeno">{p.dias_na_meta}/{p.dias_ativos} dia(s)</div>}</td>
-                        <td className="pequeno nowrap">{p.primeira_hora} – {p.ultima_hora}</td>
-                        <td className="num">{numero(p.pct_com_xml)}%</td>
-                        <td className="num">{p.prazo_medio != null ? `${numero(p.prazo_medio, 1)}d` : '—'}</td>
-                        <td className="num">{brl(p.valor)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {dados.por_equipe.map((eq) => {
+                const lista = dados.pessoas.filter((p) => p.equipe === eq.chave);
+                if (!lista.length) return null;
+                const comMeta = eq.chave === 'fiscal';
+                return (
+                  <div key={eq.chave}>
+                    <div className="linha entre" style={{ padding: '10px 12px', background: 'var(--superficie-2)', borderBottom: '1px solid var(--borda)', cursor: 'pointer', opacity: f.equipe && f.equipe !== eq.chave ? 0.5 : 1 }}
+                      title="Clique para filtrar a tela por este bloco" onClick={() => alternar('equipe', eq.chave)}>
+                      <strong>{eq.rotulo}</strong>
+                      <span className="pequeno muted">
+                        {numero(eq.pessoas)} pessoa(s) · {numero(eq.notas)} nota(s) · média {numero(eq.media_pessoa_dia ?? 0, 1)}/pessoa/dia
+                        {comMeta && eq.meta != null ? <> · meta <strong>{numero(eq.meta, 1)}</strong></> : ''}
+                      </span>
+                    </div>
+                    <div className="tabela-wrap">
+                      <table className="tabela">
+                        <thead><tr><th>Pessoa</th><th className="num">Notas</th><th className="num">Hoje</th><th className="num">Média/dia</th>{comMeta && <><th className="num">Meta/dia</th><th className="num">% meta</th></>}<th>Jornada</th><th className="num">Do XML</th><th className="num">Prazo</th><th className="num">Valor</th></tr></thead>
+                        <tbody>
+                          {lista.map((p, i) => (
+                            <tr key={p.usuario} className="clicavel" style={{ background: f.usuario === p.usuario ? 'var(--superficie-3)' : undefined }} onClick={() => alternar('usuario', p.usuario)}>
+                              <td><strong>{i + 1}º</strong> {p.usuario}<div className="muted pequeno">{p.dias_ativos} dia(s) · {p.empresas} empresa(s)</div></td>
+                              <td className="num"><strong>{numero(p.notas)}</strong></td>
+                              <td className="num">{p.hoje ? numero(p.hoje) : <span className="muted">—</span>}</td>
+                              <td className="num">{numero(p.media_dia, 1)}</td>
+                              {comMeta && <>
+                                <td className="num" title={p.meta_manual ? 'Meta manual' : 'Meta padrão'}>{p.meta_dia != null ? numero(p.meta_dia, 1) : '—'}{p.meta_manual ? ' ✎' : ''}</td>
+                                <td className="num">{p.pct_meta != null ? <span className={`badge ${p.pct_meta >= 100 ? 'sev-ok' : p.pct_meta >= 80 ? 'sev-alerta' : 'sev-erro'}`}>{numero(p.pct_meta)}%</span> : '—'}
+                                  {p.dias_na_meta != null && <div className="muted pequeno">{p.dias_na_meta}/{p.dias_ativos} dia(s)</div>}</td>
+                              </>}
+                              <td className="pequeno nowrap">{p.primeira_hora} – {p.ultima_hora}</td>
+                              <td className="num">{numero(p.pct_com_xml)}%</td>
+                              <td className="num">{p.prazo_medio != null ? `${numero(p.prazo_medio, 1)}d` : '—'}</td>
+                              <td className="num">{brl(p.valor)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
             </Cartao>
 
             <div className="coluna">
@@ -303,9 +331,9 @@ export default function Lancamentos() {
             </div>
           </div>
 
-          <Cartao titulo="Média por dia × meta" sub={`por pessoa · meta padrão ${dados.metas.padrao != null ? numero(dados.metas.padrao, 1) : '—'}/dia (${dados.metas.padrao_manual ? 'manual' : dados.metas.base})`}>
-            <ResponsiveContainer width="100%" height={Math.max(180, dados.pessoas.length * 34 + 40)}>
-              <BarChart data={dados.pessoas} layout="vertical" margin={{ left: 8, right: 40, top: 4 }} barGap={2}>
+          <Cartao titulo="Escrita Fiscal: média por dia × meta" sub={`por pessoa do time · meta padrão ${dados.metas.padrao != null ? numero(dados.metas.padrao, 1) : '—'}/dia (${dados.metas.padrao_manual ? 'manual' : dados.metas.base})`}>
+            <ResponsiveContainer width="100%" height={Math.max(180, fiscais.length * 34 + 40)}>
+              <BarChart data={fiscais} layout="vertical" margin={{ left: 8, right: 40, top: 4 }} barGap={2}>
                 <CartesianGrid horizontal={false} stroke="var(--grade)" />
                 <XAxis type="number" allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} />
                 <YAxis type="category" dataKey="usuario" tick={eixo} axisLine={false} tickLine={false} width={150} />
@@ -321,7 +349,7 @@ export default function Lancamentos() {
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar isAnimationActive={false} dataKey="media_dia" name="Média por dia" fill="var(--status-bom)" radius={[0, 4, 4, 0]} maxBarSize={14}
                   style={{ cursor: 'pointer' }} onClick={(e) => alternar('usuario', (e.payload ?? e).usuario)}>
-                  {dados.pessoas.map((p) => (
+                  {fiscais.map((p) => (
                     <Cell key={p.usuario} fill={p.meta_dia == null ? 'var(--serie-1)' : p.media_dia >= p.meta_dia ? 'var(--status-bom)' : p.pct_meta >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)'}
                       fillOpacity={!f.usuario || f.usuario === p.usuario ? 1 : 0.35} />
                   ))}
@@ -368,41 +396,63 @@ export default function Lancamentos() {
   );
 }
 
-/** Metas de lançamento por dia: padrão da equipe e exceções por pessoa (vazio = usa o padrão). */
+/**
+ * Time de Escrita Fiscal (quem tem meta) e metas por dia: padrão do time e exceções por pessoa (vazio = padrão).
+ * Quem não está no time aparece em "Outros", sem meta.
+ */
 function EditorMetas({ metas, pessoas, aoSalvar }) {
+  const chave = (n) => String(n).trim().toUpperCase();
+  // pessoas do período + membros do time que não lançaram nada no período
+  const nomes = [...new Set([...pessoas.map((p) => p.usuario), ...metas.escrita_fiscal])];
+  const naTela = new Map(pessoas.map((p) => [chave(p.usuario), p]));
+  const [time, setTime] = useState(() => new Set(metas.escrita_fiscal.map(chave)));
   const [padrao, setPadrao] = useState(metas.padrao_manual ? String(metas.padrao) : '');
   const [porPessoa, setPorPessoa] = useState(() => Object.fromEntries(pessoas.map((p) => [p.usuario, p.meta_manual ? String(p.meta_dia) : ''])));
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState(null);
+  const alternarTime = (nome) => setTime((t) => { const n = new Set(t); if (n.has(chave(nome))) n.delete(chave(nome)); else n.add(chave(nome)); return n; });
   const salvar = async () => {
     setSalvando(true); setErro(null);
     try {
-      await api.put('/lancamentos/metas', { padrao: padrao === '' ? null : Number(padrao), pessoas: Object.fromEntries(Object.entries(porPessoa).map(([n, v]) => [n, v === '' ? null : Number(v)])) });
+      await api.put('/lancamentos/metas', {
+        padrao: padrao === '' ? null : Number(padrao),
+        escrita_fiscal: nomes.filter((n) => time.has(chave(n))),
+        pessoas: Object.fromEntries(Object.entries(porPessoa).map(([n, v]) => [n, v === '' || !time.has(chave(n)) ? null : Number(v)])),
+      });
       aoSalvar();
     } catch (e) { setErro(e); }
     setSalvando(false);
   };
+  const ordenados = [...nomes].sort((x, y) => (time.has(chave(y)) - time.has(chave(x))) || x.localeCompare(y, 'pt-BR'));
   return (
     <div style={{ padding: 12, borderBottom: '1px solid var(--borda)', background: 'var(--superficie-2)' }}>
       <div className="linha pequeno" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <strong>Meta padrão (notas por pessoa/dia):</strong>
+        <strong>Meta padrão do time de Escrita Fiscal (notas por pessoa/dia):</strong>
         <input type="number" min="0" step="0.5" value={padrao} onChange={(e) => setPadrao(e.target.value)} style={{ width: 90 }}
           placeholder={metas.automatica != null ? String(Math.max(1, Math.round(metas.automatica))) : '—'} />
         <span className="muted">vazio = automática ({metas.automatica != null ? `${numero(metas.automatica, 1)}, ${metas.base}` : 'sem histórico'})</span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '4px 12px', marginTop: 8 }}>
-        {pessoas.map((p) => (
-          <label key={p.usuario} className="linha pequeno" style={{ gap: 6 }}>
-            <span className="truncar" style={{ flex: 1 }}>{p.usuario}</span>
-            <span className="muted">média {numero(p.media_dia, 1)}</span>
-            <input type="number" min="0" step="0.5" value={porPessoa[p.usuario] ?? ''} placeholder="padrão" style={{ width: 80 }}
-              onChange={(e) => setPorPessoa((x) => ({ ...x, [p.usuario]: e.target.value }))} />
-          </label>
-        ))}
+      <div className="muted pequeno" style={{ marginTop: 8 }}>Marque quem é do time de Escrita Fiscal. Só essas pessoas têm meta e entram na média automática; as demais ficam em “Outros”.</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '4px 12px', marginTop: 6 }}>
+        {ordenados.map((nome) => {
+          const noTime = time.has(chave(nome));
+          const p = naTela.get(chave(nome));
+          return (
+            <div key={nome} className="linha pequeno" style={{ gap: 6 }}>
+              <label className="linha" style={{ gap: 6, flex: 1, minWidth: 0 }}>
+                <input type="checkbox" checked={noTime} onChange={() => alternarTime(nome)} />
+                <span className="truncar" style={{ fontWeight: noTime ? 600 : undefined }}>{nome}</span>
+              </label>
+              <span className="muted">{p ? `média ${numero(p.media_dia, 1)}` : 'sem lançamento'}</span>
+              <input type="number" min="0" step="0.5" value={porPessoa[nome] ?? ''} placeholder={noTime ? 'padrão' : '—'} disabled={!noTime} style={{ width: 70 }}
+                onChange={(e) => setPorPessoa((x) => ({ ...x, [nome]: e.target.value }))} />
+            </div>
+          );
+        })}
       </div>
       <div className="linha" style={{ gap: 8, marginTop: 8 }}>
-        <button className="btn pequeno" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar metas'}</button>
-        <span className="muted pequeno">Deixe em branco para usar a meta padrão.</span>
+        <button className="btn pequeno" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</button>
+        <span className="muted pequeno">{time.size} pessoa(s) no time · meta individual em branco = meta padrão</span>
       </div>
       <Erro erro={erro} />
     </div>

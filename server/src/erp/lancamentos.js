@@ -11,41 +11,65 @@ import { ateOMinuto, comCache } from './cache.js';
 const SITUACOES = { 1: 'Em digitação', 2: 'Fechada', 3: 'Cancelada' };
 const LIMITE_ITENS = 10000;
 
-// ------------------------------------------------------------------ metas de lançamento
-// Meta automática = média da equipe de notas por pessoa em cada dia trabalhado, nos últimos 90 dias
-// (notas não canceladas, pela data em que foram lançadas). Metas manuais (padrão e por pessoa) substituem a automática.
+// ------------------------------------------------------------------ equipes e metas de lançamento
+// Só o time de Escrita Fiscal tem meta; as demais pessoas que lançam nota aparecem como "Outros".
+// Meta automática = média do time de Escrita Fiscal, em notas por pessoa em cada dia trabalhado, nos últimos
+// 90 dias (notas não canceladas, pela data em que foram lançadas). Metas manuais substituem a automática.
 const DIAS_BASE_META = 90;
-const SQL_MEDIA = `SELECT COUNT(*) AS PESSOA_DIAS, SUM(q.N) AS NOTAS FROM (
+// Time inicial (usuários do Senior); pode ser alterado na tela, em "Editar metas"
+const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA', 'AMANDA.MARQUES', 'ELZELI.SANTOS',
+  'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA'];
+export const EQUIPES = { fiscal: 'Escrita Fiscal', outros: 'Outros' };
+const nomeChave = (n) => String(n ?? '').trim().toUpperCase();
+
+const SQL_MEDIA = `SELECT MAX(u.NOMUSU) AS NOMUSU, q.USUGER, COUNT(*) AS DIAS, SUM(q.N) AS NOTAS FROM (
     SELECT n.USUGER, n.DATGER, COUNT(*) AS N FROM E440NFC n
     WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'
-    GROUP BY n.USUGER, n.DATGER) q`;
-let mediaGuardada = { em: 0, valor: null };
+    GROUP BY n.USUGER, n.DATGER) q
+  LEFT JOIN r999usu u ON u.CODUSU = q.USUGER
+  GROUP BY q.USUGER`;
+let historicoPessoas = { em: 0, linhas: null };
 
-/** Média histórica de notas por pessoa por dia trabalhado (cache de 12 horas). */
-async function mediaHistorica() {
-  if (Date.now() - mediaGuardada.em < 12 * 3600000) return mediaGuardada.valor;
+/** Dias trabalhados e notas por pessoa nos últimos 90 dias (cache de 12 horas). */
+async function historicoPorPessoa() {
+  if (Date.now() - historicoPessoas.em < 12 * 3600000) return historicoPessoas.linhas;
   try {
-    const [l] = await consultar(SQL_MEDIA, new Date(Date.now() - DIAS_BASE_META * 86400000), { ate: new Date() });
-    const valor = Number(l?.PESSOA_DIAS) ? Math.round((Number(l.NOTAS) / Number(l.PESSOA_DIAS)) * 10) / 10 : null;
-    mediaGuardada = { em: Date.now(), valor };
+    const linhas = await consultar(SQL_MEDIA, new Date(Date.now() - DIAS_BASE_META * 86400000), { ate: new Date() });
+    historicoPessoas = {
+      em: Date.now(),
+      linhas: linhas.map((l) => ({ usuario: String(l.NOMUSU ?? '').trim() || `Usuário ${l.USUGER}`, dias: Number(l.DIAS), notas: Number(l.NOTAS) })),
+    };
   } catch {
-    mediaGuardada = { em: Date.now() - 11 * 3600000, valor: mediaGuardada.valor }; // tenta de novo em 1 hora
+    historicoPessoas = { em: Date.now() - 11 * 3600000, linhas: historicoPessoas.linhas }; // tenta de novo em 1 hora
   }
-  return mediaGuardada.valor;
+  return historicoPessoas.linhas;
 }
 
-/** Metas em vigor: manual quando cadastrada, senão a média histórica arredondada. */
-export function metasLancamento(automatica) {
+/** Metas em vigor e composição do time. A média automática considera só o time de Escrita Fiscal. */
+export function metasLancamento(historico = historicoPessoas.linhas) {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
+  const membros = cfg.escrita_fiscal ?? ESCRITA_FISCAL_PADRAO;
+  const doTime = new Set(membros.map(nomeChave));
+  const base = (historico ?? []).filter((h) => doTime.has(nomeChave(h.usuario)));
+  const dias = base.reduce((s, h) => s + h.dias, 0);
+  const automatica = dias ? Math.round((base.reduce((s, h) => s + h.notas, 0) / dias) * 10) / 10 : null;
   const auto = automatica != null ? Math.max(1, Math.round(automatica)) : null;
+  const pessoas = cfg.pessoas ?? {};
+  const equipeDe = (usuario) => (doTime.has(nomeChave(usuario)) ? 'fiscal' : 'outros');
   return {
-    padrao: cfg.padrao ?? auto, padrao_manual: cfg.padrao != null,
-    automatica, pessoas: cfg.pessoas ?? {}, base: `média da equipe por pessoa/dia nos últimos ${DIAS_BASE_META} dias`,
+    padrao: cfg.padrao ?? auto, padrao_manual: cfg.padrao != null, automatica,
+    base: `média do time de Escrita Fiscal por pessoa/dia nos últimos ${DIAS_BASE_META} dias`,
+    escrita_fiscal: membros, pessoas, equipeDe,
+    // meta só para o time de Escrita Fiscal
+    metaDe: (usuario) => (equipeDe(usuario) === 'fiscal' ? pessoas[usuario] ?? cfg.padrao ?? auto : null),
   };
 }
 
-/** Grava metas manuais. padrao: número ou null (volta para a automática); pessoas: { nome: número|null }. */
-export function salvarMetas({ padrao, pessoas } = {}) {
+/**
+ * Grava metas manuais e o time.
+ * padrao: número ou null (volta para a automática); pessoas: { nome: número|null }; escrita_fiscal: [nomes]
+ */
+export function salvarMetas({ padrao, pessoas, escrita_fiscal: time } = {}) {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
   const num = (v) => (v === null || v === '' || v === undefined ? null : Number(v) > 0 ? Math.round(Number(v) * 10) / 10 : null);
   if (padrao !== undefined) cfg.padrao = num(padrao);
@@ -53,8 +77,10 @@ export function salvarMetas({ padrao, pessoas } = {}) {
   for (const [nome, v] of Object.entries(pessoas ?? {})) {
     if (num(v) == null) delete cfg.pessoas[nome]; else cfg.pessoas[nome] = num(v);
   }
+  if (Array.isArray(time)) cfg.escrita_fiscal = [...new Set(time.map((n) => String(n).trim()).filter(Boolean))];
   setConfig('metas_lancamento', cfg);
-  return metasLancamento(mediaGuardada.valor);
+  const { equipeDe, metaDe, ...r } = metasLancamento();
+  return r;
 }
 
 const SQL = `SELECT n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n.DATGER, n.HORGER, n.USUGER, n.VLRLIQ, n.SITNFC,
@@ -122,7 +148,10 @@ export async function painelLancamentos(filtros = {}) {
   // (a selecionada fica destacada) e permitir trocar a escolha.
   const escolhidas = String(filtros.situacoes ?? 'todas').split(',').map((s) => s.trim()).filter(Boolean);
   const filtroHora = filtros.hora !== undefined && filtros.hora !== '' ? Number(filtros.hora) : null;
+  const metas = metasLancamento(await historicoPorPessoa());
+  const { metaDe, equipeDe } = metas;
   const testes = {
+    equipe: (i) => !filtros.equipe || equipeDe(i.usuario) === filtros.equipe,
     usuario: (i) => !filtros.usuario || i.usuario === filtros.usuario,
     codemp: (i) => !filtros.codemp || String(i.codemp) === String(filtros.codemp),
     // empresa = "codemp/codfil", como aparece na caixa de seleção
@@ -139,8 +168,6 @@ export async function painelLancamentos(filtros = {}) {
   const hoje = new Date().toLocaleDateString('sv-SE');
   const paraDias = semFiltro('dia');
   const dias = [...new Set(paraDias.map((i) => i.dia))].sort();
-  const metas = metasLancamento(await mediaHistorica());
-  const metaDe = (usuario) => metas.pessoas[usuario] ?? metas.padrao;
   const porDia = dias.map((d) => {
     const doDia = paraDias.filter((i) => i.dia === d);
     const quem = [...new Set(doDia.map((i) => i.usuario))];
@@ -170,7 +197,8 @@ export async function painelLancamentos(filtros = {}) {
     return {
       usuario: p.usuario, notas: p.notas, valor: Math.round(p.valor * 100) / 100,
       dias_ativos: p.dias.size, media_dia: mediaDia,
-      meta_dia: meta, meta_manual: metas.pessoas[p.usuario] != null,
+      equipe: equipeDe(p.usuario),
+      meta_dia: meta, meta_manual: meta != null && metas.pessoas[p.usuario] != null,
       pct_meta: meta ? Math.round((mediaDia / meta) * 100) : null,
       dias_na_meta: meta ? [...p.dias.values()].filter((n) => n >= meta).length : null,
       empresas: p.empresas.size,
@@ -212,12 +240,24 @@ export async function painelLancamentos(filtros = {}) {
   const prazos = itens.map((i) => i.dias_ate_lancar).filter((v) => v != null);
   const doDiaHoje = itens.filter((i) => i.dia === hoje);
   const pessoaDias = new Set(itens.map((i) => `${i.usuario}|${i.dia}`)).size;
+  // Resumo por equipe (ignora o próprio filtro de equipe, para os dois blocos aparecerem sempre)
+  const porEquipe = Object.entries(EQUIPES).map(([chave, rotulo]) => {
+    const lista = semFiltro('equipe').filter((i) => equipeDe(i.usuario) === chave);
+    const pd = new Set(lista.map((i) => `${i.usuario}|${i.dia}`)).size;
+    return {
+      chave, rotulo, notas: lista.length, valor: soma(lista, (i) => i.valor),
+      pessoas: new Set(lista.map((i) => i.usuario)).size,
+      media_pessoa_dia: pd ? Math.round((lista.length / pd) * 10) / 10 : null,
+      meta: chave === 'fiscal' ? metas.padrao : null,
+    };
+  });
 
   return {
     periodo, base, situacoes: escolhidas.join(','), situacoes_disponiveis: SITUACOES,
     empresa: filtros.empresa ?? '',
-    filtros_ativos: { usuario: filtros.usuario || null, empresa: filtros.empresa || null, dia: filtros.dia || null, hora: filtroHora, origem: filtros.origem || null },
-    metas: { padrao: metas.padrao, automatica: metas.automatica, padrao_manual: metas.padrao_manual, base: metas.base },
+    filtros_ativos: { equipe: filtros.equipe || null, usuario: filtros.usuario || null, empresa: filtros.empresa || null, dia: filtros.dia || null, hora: filtroHora, origem: filtros.origem || null },
+    metas: { padrao: metas.padrao, automatica: metas.automatica, padrao_manual: metas.padrao_manual, base: metas.base, escrita_fiscal: metas.escrita_fiscal },
+    por_equipe: porEquipe,
     empresas_disponiveis: [...porEmpresa].sort((a, b) => a.rotulo.localeCompare(b.rotulo, 'pt-BR')),
     indicadores: {
       notas: itens.length, valor: soma(itens, (i) => i.valor),
