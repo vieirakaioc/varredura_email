@@ -143,10 +143,10 @@ export async function painelLancamentos(filtros = {}) {
   // "Z": o driver converte para UTC; sem isso o período andava 3 horas e perdia o primeiro dia
   const de = new Date(`${periodo.de}T00:00:00Z`);
   const ate = new Date(`${periodo.ate}T23:59:59Z`);
-  // Pessoa, empresa e situação são filtrados abaixo, sobre estas linhas: cache de um minuto por período
+  // Pessoa, empresa e situação são filtrados abaixo, sobre estas linhas: cache de cinco minutos por período (renovado em segundo plano enquanto a tela é usada)
   const linhas = await comCache(
     `lancamentos|${base}|${ateOMinuto(de)}|${ateOMinuto(ate)}`,
-    filtros.forcar === '1' ? 0 : 60_000,
+    filtros.forcar === '1' ? 0 : 300_000,
     () => consultar(SQL.replaceAll('{campoData}', campoData), de, { ate }),
   );
 

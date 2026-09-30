@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import express from 'express';
 import { config, paths, ROOT_DIR } from './config.js';
 import { get, insert, run } from './db/index.js';
@@ -36,6 +37,22 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '25mb' })); // exportação de tabelas envia as linhas filtradas
+// Respostas JSON grandes (listas de notas do Senior) vão comprimidas: ~10x menos para baixar
+app.use((req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = (corpo) => {
+    const texto = JSON.stringify(corpo);
+    if (texto.length < 8192 || !/\bgzip\b/.test(req.headers['accept-encoding'] ?? '')) return json(corpo);
+    zlib.gzip(texto, { level: 5 }, (erro, comprimido) => {
+      if (erro || res.headersSent) return erro && !res.headersSent ? res.type('json').send(texto) : undefined;
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.type('json').send(comprimido);
+    });
+    return res;
+  };
+  next();
+});
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');

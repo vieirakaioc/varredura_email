@@ -162,13 +162,19 @@ export async function painelPendentes(filtros = {}) {
     : tudoAberto ? new Date('2000-01-01T00:00:00Z')
       : filtros.de ? new Date(`${filtros.de}T00:00:00Z`) : new Date(Date.now() - (Number(filtros.dias) || 60) * 86400000);
   // Os filtros da tela são aplicados abaixo, sobre estas linhas: só o período muda a consulta,
-  // então ela fica em cache por um minuto ("Atualizar" na tela força a leitura no banco).
+  // então ela fica em cache por cinco minutos ("Atualizar" na tela força a leitura no banco).
   const sql = SQL.replace('{somenteAbertas}', tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '');
   // A chave usa o filtro pedido, não as datas calculadas: "últimos 60 dias" vira um Date diferente
   // a cada chamada e o cache nunca seria aproveitado.
+  // A série do gráfico "chegada × lançamento" é outra consulta: começa junto, sem esperar a principal
+  const hojeSerie = hoje();
+  const diasSerie = Array.from({ length: 21 }, (_, k) => new Date(Date.now() - (20 - k) * 86400000).toLocaleDateString('sv-SE'));
+  const serieAsync = comCache(`pendentes-serie|${hojeSerie}`, filtros.forcar === '1' ? 0 : 300_000,
+    () => consultar(SQL_SERIE, new Date(`${diasSerie[0]}T00:00:00Z`), { ate: new Date(`${hojeSerie}T23:59:59Z`) }));
+  serieAsync.catch(() => {}); // o erro é tratado lá embaixo
   const linhas = await comCache(
     `pendentes3|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
-    filtros.forcar === '1' ? 0 : 60_000,
+    filtros.forcar === '1' ? 0 : 300_000,
     () => consultar(sql, de, { ate, abertasDesde: new Date(Date.now() - DIAS_ABERTAS * 86400000) }),
   );
 
@@ -217,12 +223,9 @@ export async function painelPendentes(filtros = {}) {
 
   // Série diária dos últimos 21 dias: o que chegou x o que foi lançado. Consulta própria: a lista acima
   // depende do período/filtros (no "Tudo em aberto" nem tem notas lançadas) e não serve para isso.
-  const dias = Array.from({ length: 21 }, (_, k) => new Date(Date.now() - (20 - k) * 86400000).toLocaleDateString('sv-SE'));
-  const porDia = new Map(dias.map((d) => [d, { dia: d, recebidas: 0, lancadas: 0, pendentes: 0 }]));
+  const porDia = new Map(diasSerie.map((d) => [d, { dia: d, recebidas: 0, lancadas: 0, pendentes: 0 }]));
   try {
-    const desdeSerie = new Date(`${dias[0]}T00:00:00Z`);
-    const linhasSerie = await comCache(`pendentes-serie|${dia}`, filtros.forcar === '1' ? 0 : 300_000,
-      () => consultar(SQL_SERIE, desdeSerie, { ate: new Date(`${dia}T23:59:59Z`) }));
+    const linhasSerie = await serieAsync;
     for (const l of linhasSerie) {
       const empresaSerie = `${l.CODEMP}/${l.CODFIL}`;
       if (filtros.empresa && empresaSerie !== filtros.empresa) continue;

@@ -291,15 +291,18 @@ export function useFiltrosLembrados(chave, ignorar = []) {
 // ou a um filtro já usado, enquanto os dados novos chegam por baixo.
 const memoriaDados = new Map();
 const MEMORIA_MAX = 30;
+// Voltar a uma tela carregada há menos que isso não pede nada ao servidor
+const MEMORIA_FRESCA_MS = 2 * 60_000;
 function guardarNaMemoria(chave, dados) {
   memoriaDados.delete(chave);
-  memoriaDados.set(chave, dados);
+  memoriaDados.set(chave, { dados, em: Date.now() });
   if (memoriaDados.size > MEMORIA_MAX) memoriaDados.delete(memoriaDados.keys().next().value);
 }
 
 export function useDados(fn, deps = [], { automatico = true, memoria = null } = {}) {
   const chaveMemoria = memoria ? `${memoria}|${JSON.stringify(deps)}` : null;
-  const [estado, setEstado] = useState(() => ({ dados: (chaveMemoria && memoriaDados.get(chaveMemoria)) ?? null, erro: null, carregando: true }));
+  const [estado, setEstado] = useState(() => ({ dados: (chaveMemoria && memoriaDados.get(chaveMemoria)?.dados) ?? null, erro: null, carregando: true }));
+  const ultimoN = useRef(0);
   const [n, setN] = useState(0);
   const [silencioso, setSilencioso] = useState(0);
   const fnRef = useRef(fn);
@@ -309,7 +312,15 @@ export function useDados(fn, deps = [], { automatico = true, memoria = null } = 
   useEffect(() => {
     let vivo = true;
     const guardado = chaveMemoria && !forcar.current ? memoriaDados.get(chaveMemoria) : undefined;
-    setEstado((e) => ({ ...e, dados: guardado ?? e.dados, carregando: true }));
+    // Abriu a tela (ou voltou a um filtro) com dado recente na memória: mostra e não consulta de novo.
+    // "Atualizar" e gravações (n mudou) sempre consultam.
+    const pedidoExplicito = n !== ultimoN.current;
+    ultimoN.current = n;
+    if (guardado && !pedidoExplicito && Date.now() - guardado.em < MEMORIA_FRESCA_MS) {
+      setEstado({ dados: guardado.dados, erro: null, carregando: false });
+      return undefined;
+    }
+    setEstado((e) => ({ ...e, dados: guardado?.dados ?? e.dados, carregando: true }));
     const pedido = fnRef.current({ forcar: forcar.current });
     forcar.current = false;
     pedido.then((dados) => { if (chaveMemoria) guardarNaMemoria(chaveMemoria, dados); if (vivo) setEstado({ dados, erro: null, carregando: false }); })
