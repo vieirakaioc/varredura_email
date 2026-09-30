@@ -15,12 +15,13 @@ const LIMITE_ITENS = 10000;
 // Só o time de Escrita Fiscal tem meta; as demais pessoas que lançam nota aparecem como "Outros".
 // Meta pela capacidade de trabalho:
 //   minutos da jornada (saída − entrada − intervalo) × % de tempo produtivo ÷ minutos por nota = notas por dia
-//   ex.: 08:00–17:48 com 1 h de almoço = 528 min × 85% ÷ 8 min = 56 notas/dia
+//   ex.: 08:00–17:48 com 1 h de almoço = 528 min × 85% ÷ 12 min = 37 notas/dia
+//   (12 min: calibrado pelo histórico do time, ~7 mil notas/mês em 2026; o melhor mês fica perto de 100%)
 // Cada pessoa pode ter jornada própria (minutos por dia e dias da semana, ex.: aprendiz) ou uma meta fixa.
 // Feriados não são descontados.
 const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA', 'AMANDA.MARQUES', 'ELZELI.SANTOS',
   'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA'];
-const PARAMETROS_PADRAO = { minutos_por_nota: 8, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
+const PARAMETROS_PADRAO = { minutos_por_nota: 12, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
 // Emanuelle é aprendiz: 4 horas por dia, de segunda a quinta
 const JORNADAS_PADRAO = { 'EMANUELLE.SILVA': { minutos_dia: 240, dias_semana: [1, 2, 3, 4] } };
 export const EQUIPES = { fiscal: 'Escrita Fiscal', outros: 'Outros' };
@@ -215,7 +216,9 @@ export async function painelLancamentos(filtros = {}) {
     const p = m.get(i.usuario) ?? { usuario: i.usuario, notas: 0, valor: 0, com_xml: 0, horas: [], dias: new Map(), prazos: [], empresas: new Set() };
     p.notas += 1; p.valor += i.valor ?? 0; p.com_xml += i.com_xml ? 1 : 0;
     if (i.hora != null) p.horas.push(i.hora + (i.minuto ?? 0) / 60);
-    p.dias.set(i.dia, (p.dias.get(i.dia) ?? 0) + 1); p.empresas.add(`${i.codemp}/${i.codfil}`);
+    // dias trabalhados = dias em que a pessoa lançou (data de geração), qualquer que seja a data base da tela
+    const trabalhou = i.geracao ?? i.dia;
+    p.dias.set(trabalhou, (p.dias.get(trabalhou) ?? 0) + 1); p.empresas.add(`${i.codemp}/${i.codfil}`);
     if (i.dias_ate_lancar != null) p.prazos.push(i.dias_ate_lancar);
     return m.set(i.usuario, p);
   }, new Map()).values()].map((p) => {
@@ -272,11 +275,11 @@ export async function painelLancamentos(filtros = {}) {
   })).filter((s) => s.notas > 0);
   const prazos = itens.map((i) => i.dias_ate_lancar).filter((v) => v != null);
   const doDiaHoje = itens.filter((i) => i.dia === hoje);
-  const pessoaDias = new Set(itens.map((i) => `${i.usuario}|${i.dia}`)).size;
+  const pessoaDias = new Set(itens.map((i) => `${i.usuario}|${i.geracao ?? i.dia}`)).size;
   // Resumo por equipe (ignora o próprio filtro de equipe, para os dois blocos aparecerem sempre)
   const porEquipe = Object.entries(EQUIPES).map(([chave, rotulo]) => {
     const lista = semFiltro('equipe').filter((i) => equipeDe(i.usuario) === chave);
-    const pd = new Set(lista.map((i) => `${i.usuario}|${i.dia}`)).size;
+    const pd = new Set(lista.map((i) => `${i.usuario}|${i.geracao ?? i.dia}`)).size;
     return {
       chave, rotulo, notas: lista.length, valor: soma(lista, (i) => i.valor),
       pessoas: new Set(lista.map((i) => i.usuario)).size,
