@@ -15,12 +15,12 @@ const LIMITE_ITENS = 10000;
 // Só o time de Escrita Fiscal tem meta; as demais pessoas que lançam nota aparecem como "Outros".
 // Meta pela capacidade de trabalho:
 //   minutos da jornada (saída − entrada − intervalo) × % de tempo produtivo ÷ minutos por nota = notas por dia
-//   ex.: 08:00–17:48 com 1 h de almoço = 528 min × 85% ÷ 5 min = 89 notas/dia
+//   ex.: 08:00–17:48 com 1 h de almoço = 528 min × 85% ÷ 10 min = 44 notas/dia
 // Cada pessoa pode ter jornada própria (minutos por dia e dias da semana, ex.: aprendiz) ou uma meta fixa.
 // Feriados não são descontados.
 const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA', 'AMANDA.MARQUES', 'ELZELI.SANTOS',
   'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA'];
-const PARAMETROS_PADRAO = { minutos_por_nota: 5, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
+const PARAMETROS_PADRAO = { minutos_por_nota: 10, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
 // Emanuelle é aprendiz: 4 horas por dia, de segunda a quinta
 const JORNADAS_PADRAO = { 'EMANUELLE.SILVA': { minutos_dia: 240, dias_semana: [1, 2, 3, 4] } };
 export const EQUIPES = { fiscal: 'Escrita Fiscal', outros: 'Outros' };
