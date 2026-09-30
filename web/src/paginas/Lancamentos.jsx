@@ -53,7 +53,7 @@ export default function Lancamentos() {
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ aba: 'lancamentos', ...f, [k]: v }).filter(([, x]) => x)));
   const { dados, erro, carregando, recarregar } = useDados(
     ({ forcar } = {}) => api.get(`/lancamentos${qs({ forcar: forcar ? '1' : '', mes, dias: mes ? '' : f.dias, usuario: f.usuario, base: f.base, situacoes: f.situacoes, empresa: f.empresa })}`),
-    [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa], { automatico: false },
+    [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa], { automatico: false, memoria: 'lancamentos' },
   );
   const [horaDestaque, setHoraDestaque] = useState(null);
   const k = dados?.indicadores;

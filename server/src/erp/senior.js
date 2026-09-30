@@ -45,6 +45,32 @@ function sqlConsulta(dialeto, base = env.SENIOR_SQL || SQL_PADRAO) {
   return base.replaceAll('{desde}', dialeto === 'oracle' ? ':desde' : '@desde');
 }
 
+// Pool único e permanente para o SQL Server. Abrir e fechar uma conexão a cada consulta (login + TLS)
+// custava segundos em cada troca de tela ou filtro. O pool nunca é fechado pelas consultas, então
+// consultas simultâneas não derrubam umas às outras (era o problema do mssql.connect() global).
+let poolPromessa = null;
+function poolSqlServer(mssql) {
+  if (!poolPromessa) {
+    const pool = new mssql.ConnectionPool({
+      server: env.SENIOR_DB_HOST, port: Number(env.SENIOR_DB_PORTA || 1433), database: env.SENIOR_DB_NOME,
+      user: env.SENIOR_DB_USUARIO, password: env.SENIOR_DB_SENHA,
+      options: { encrypt: env.SENIOR_DB_CRIPTOGRAFAR === 'true', trustServerCertificate: true, readOnlyIntent: true },
+      requestTimeout: 120000,
+      pool: { max: 6, min: 0, idleTimeoutMillis: 5 * 60_000 },
+    });
+    pool.on('error', () => descartarPool(pool));
+    const promessa = pool.connect().catch((e) => { if (poolPromessa === promessa) poolPromessa = null; throw e; });
+    promessa.pool = pool;
+    poolPromessa = promessa;
+  }
+  return poolPromessa;
+}
+function descartarPool(pool) {
+  if (poolPromessa?.pool !== pool) return;
+  poolPromessa = null;
+  pool.close().catch(() => {});
+}
+
 /**
  * Executa a consulta no Senior e devolve linhas com chaves em maiúsculas.
  * `extras`: parâmetros adicionais { nome: valor } (Date, número ou texto), usados como @nome / :nome.
@@ -53,14 +79,7 @@ export async function consultar(sql, desde, extras = {}) {
   const tipo = (env.SENIOR_DB_TIPO || '').toLowerCase();
   if (tipo === 'mssql' || tipo === 'sqlserver') {
     const mssql = (await import('mssql')).default;
-    // Pool próprio por consulta: mssql.connect() usa um pool global, e duas consultas ao mesmo tempo
-    // derrubavam uma à outra ("Connection not yet open") quando a primeira o fechava.
-    const pool = await new mssql.ConnectionPool({
-      server: env.SENIOR_DB_HOST, port: Number(env.SENIOR_DB_PORTA || 1433), database: env.SENIOR_DB_NOME,
-      user: env.SENIOR_DB_USUARIO, password: env.SENIOR_DB_SENHA,
-      options: { encrypt: env.SENIOR_DB_CRIPTOGRAFAR === 'true', trustServerCertificate: true, readOnlyIntent: true },
-      requestTimeout: 120000,
-    }).connect();
+    const pool = await poolSqlServer(mssql);
     try {
       const req = pool.request();
       if (desde) req.input('desde', mssql.DateTime, desde);
@@ -69,7 +88,11 @@ export async function consultar(sql, desde, extras = {}) {
       }
       const r = await req.query(sql);
       return r.recordset.map((l) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k.toUpperCase(), v])));
-    } finally { await pool.close(); }
+    } catch (e) {
+      // Conexão caiu (rede, servidor reiniciado): descarta o pool para a próxima consulta abrir outro
+      if (!pool.connected) descartarPool(pool);
+      throw e;
+    }
   }
   if (tipo === 'oracle') {
     const oracledb = (await import('oracledb')).default;

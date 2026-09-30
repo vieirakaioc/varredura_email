@@ -36,8 +36,8 @@ const COLUNAS_EXPORT = [
   { titulo: 'UF', valor: (l) => l.uf },
   { titulo: 'Valor', tipo: 'moeda', valor: (l) => l.valor },
   { titulo: 'Situação', valor: (l) => l.situacao_rotulo },
-  { titulo: 'Motivo', valor: (l) => (l.cancelada ? 'Cancelada na SEFAZ' : !l.empresa_do_grupo ? 'Destinatário fora do grupo' : !l.fornecedor_cadastrado ? 'Fornecedor não cadastrado' : l.itens === 0 ? 'XML sem itens' : !(l.valor > 0) ? 'Valor zerado' : '') },
-  { titulo: 'Tipo', valor: (l) => (l.tipo_movimento === 'saida' ? 'Saída' : 'Entrada') },
+  { titulo: 'Motivo', valor: (l) => (l.cancelada ? 'Cancelada na SEFAZ' : !l.empresa_do_grupo ? 'Destinatário fora do grupo' : !l.fornecedor_cadastrado ? 'Fornecedor não cadastrado' : !l.tem_itens ? 'XML sem itens' : !(l.valor > 0) ? 'Valor zerado' : '') },
+  { titulo: 'Tipo', valor: (l) => (l.tipo_movimento === 'saida' ? 'Saída' : l.entrada_propria ? 'Entrada própria' : l.transferencia ? 'Transferência' : 'Entrada') },
   { titulo: 'Entrada no Senior', tipo: 'data', valor: (l) => l.entrada?.data },
   { titulo: 'Observação do XML', valor: (l) => l.observacao },
 ];
@@ -103,10 +103,11 @@ function PainelPendentes() {
     setFiltro('situacoes', nova.join(',') || 'pendente');
   };
   const [busca, setBusca] = useState(f.fornecedor);
+  const [mostrar, setMostrar] = useState(500);
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ ...f, [k]: v }).filter(([, x]) => x !== '' && x != null)));
   const { dados, erro, carregando, recarregar } = useDados(
     ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros })}`),
-    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros], { automatico: false },
+    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros], { automatico: false, memoria: 'pendentes' },
   );
   const k = dados?.indicadores;
   const itens = (dados?.itens ?? []).filter((l) => {
@@ -181,14 +182,14 @@ function PainelPendentes() {
         {carregando && !dados ? <Carregando /> : k && (
           <>
             <div className="grade grade-kpi monetario">
-              <Kpi rotulo="Pendentes de lançamento" valor={numero(k.pendentes)} detalhe={brl(k.pendentes_valor)} cor="var(--status-critico)" onClick={() => setFiltro('situacao', 'pendentes')} />
+              <Kpi rotulo="Pendentes de lançamento" valor={numero(k.pendentes)} detalhe={brl(k.pendentes_valor)} cor="var(--status-critico)" onClick={() => setFiltro('situacoes', 'pendente,inconsistente,incompleta')} />
               <Kpi rotulo="Paradas há mais de 5 dias" valor={numero(k.paradas_mais_5)} detalhe={`mais antiga: ${k.mais_antiga} dia(s)`} cor="var(--status-atencao)" onClick={() => setFiltro('faixa', f.faixa ? '' : '6-10')} />
               <Kpi rotulo="Chegaram hoje" valor={numero(k.recebidas_hoje)} detalhe={`${numero(k.pendentes_hoje)} ainda sem lançar`} cor="var(--serie-1)" />
               {dados.tudo_aberto
                 ? <Kpi rotulo="Mais antiga em aberto" valor={`${numero(k.mais_antiga)} dia(s)`} detalhe="sem limite de data" cor="var(--dup)" />
                 : <>
                   <Kpi rotulo="Lançadas hoje" valor={numero(k.lancadas_hoje)} detalhe={`saldo do dia: ${k.recebidas_hoje - k.lancadas_hoje >= 0 ? '+' : ''}${numero(k.recebidas_hoje - k.lancadas_hoje)}`} cor="var(--status-bom)" />
-                  <Kpi rotulo="Lançadas no período" valor={numero(k.lancadas)} detalhe={`${Math.round((k.lancadas / (k.total || 1)) * 100)}% do que chegou`} cor="var(--ok)" onClick={() => setFiltro('situacao', 'lancadas')} />
+                  <Kpi rotulo="Lançadas no período" valor={numero(k.lancadas)} detalhe={`${Math.round((k.lancadas / (k.total || 1)) * 100)}% do que chegou`} cor="var(--ok)" onClick={() => setFiltro('situacoes', 'processada')} />
                 </>}
               {k.canceladas_pendentes > 0 && <Kpi rotulo="Canceladas na SEFAZ" valor={numero(k.canceladas_pendentes)} detalhe="pendentes que NÃO devem ser lançadas" cor="var(--dup)" />}
             </div>
@@ -328,7 +329,7 @@ function PainelPendentes() {
               <table className="tabela">
                 <thead><tr><th>Espera</th><th>Documento</th><th>Fornecedor</th><th>Empresa destinatária</th><th className="num">Valor</th><th>Situação</th><th>Chave</th></tr></thead>
                 <tbody>
-                  {itens.slice(0, 500).map((l) => (
+                  {itens.slice(0, mostrar).map((l) => (
                     <tr key={l.chave}>
                       <td className="nowrap">
                         <span className={`badge ${l.dias_parada > 10 ? 'sev-erro' : l.dias_parada > 5 ? 'sev-alerta' : 'sev-na'}`}>
@@ -344,14 +345,15 @@ function PainelPendentes() {
                         {l.situacao === 'processada' ? <><span className="badge sev-ok">Processada</span><div className="muted pequeno">{data(l.entrada.data)} · NF {l.entrada.numero}</div></>
                           : l.situacao === 'inconsistente' ? <><span className="badge sev-erro">Inconsistente</span><div className="muted pequeno">{l.cancelada ? `cancelada na SEFAZ · ${data(l.cancelada_em)}` : !l.empresa_do_grupo ? 'destinatário fora do grupo' : 'valor zerado'}</div></>
                             : l.situacao === 'incompleta' ? <><span className="badge sev-alerta">Incompleta</span><div className="muted pequeno">{!l.fornecedor_cadastrado ? 'fornecedor não cadastrado' : 'XML sem itens'}</div></>
-                              : <><span className="badge sev-conferencia">Pendente</span>{l.tipo_movimento === 'saida' && <div className="muted pequeno">saída do grupo</div>}</>}
+                              : <><span className="badge sev-conferencia">Pendente</span>{l.tipo_movimento === 'saida' ? <div className="muted pequeno">saída do grupo</div> : l.entrada_propria ? <div className="muted pequeno">nota de entrada própria</div> : l.transferencia ? <div className="muted pequeno">transferência do grupo</div> : null}</>}
                       </td>
                       <td className="mono pequeno" title={l.chave}>{l.chave?.slice(-12)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {itens.length > 500 && <div className="paginacao"><span>Exibindo 500 de {numero(itens.length)} — use os filtros ou exporte para Excel</span></div>}
+              {itens.length > mostrar && <div className="paginacao"><span>Exibindo {numero(mostrar)} de {numero(itens.length)}</span><button className="btn pequeno" onClick={() => setMostrar((m) => m + 1000)}>Mostrar mais</button></div>}
+              {dados?.truncado && <div className="paginacao"><span>A consulta tem {numero(dados.total_itens)} notas; a lista traz as {numero(dados.itens.length)} mais antigas. Use os filtros ou exporte para Excel.</span></div>}
             </div>
           )}
         </Cartao>

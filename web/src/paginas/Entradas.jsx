@@ -55,7 +55,7 @@ function Conferencia() {
   const empresas = (refs.dados?.empresas ?? []).filter((e) => e.codemp);
   const emp = empresas.find((e) => String(e.id) === filtros.empresa);
   const consulta = { de: filtros.de, ate: filtros.ate, codemp: emp?.codemp, codfil: emp?.codfil, codtns: filtros.codtns, cfop: filtros.cfop, fornecedor: filtros.fornecedor, so_divergencias: filtros.so_divergencias };
-  const { dados, erro, carregando, recarregar } = useDados(() => api.get(`/entradas${qs(consulta)}`), [JSON.stringify(consulta)], { automatico: false });
+  const { dados, erro, carregando, recarregar } = useDados(() => api.get(`/entradas${qs(consulta)}`), [JSON.stringify(consulta)], { automatico: false, memoria: 'entradas' });
   const aplicar = (extra = {}) => setParams(Object.fromEntries(Object.entries({ ...form, ...extra }).filter(([, v]) => v !== '' && v != null)));
   const setJa = (k) => (e) => { const v = e.target.type === 'checkbox' ? (e.target.checked ? '1' : '0') : e.target.value; setForm((f) => ({ ...f, [k]: v })); aplicar({ [k]: v }); };
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -150,7 +150,7 @@ function Conferencia() {
 function Depara() {
   const avisar = useToast();
   const { pode } = useAuth();
-  const { dados, erro, carregando, recarregar } = useDados(() => api.get('/entradas/transacoes'), [], { automatico: false });
+  const { dados, erro, carregando, recarregar } = useDados(() => api.get('/entradas/transacoes'), [], { automatico: false, memoria: 'transacoes' });
   const [edicao, setEdicao] = useState({});
   const [busca, setBusca] = useState('');
   const salvar = async (t) => {

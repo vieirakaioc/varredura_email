@@ -280,8 +280,19 @@ export function useFiltrosLembrados(chave, ignorar = []) {
   }, [atual]);
 }
 
-export function useDados(fn, deps = [], { automatico = true } = {}) {
-  const [estado, setEstado] = useState({ dados: null, erro: null, carregando: true });
+// Último resultado de cada consulta pesada (opção `memoria`), para a tela abrir na hora ao voltar a ela
+// ou a um filtro já usado, enquanto os dados novos chegam por baixo.
+const memoriaDados = new Map();
+const MEMORIA_MAX = 30;
+function guardarNaMemoria(chave, dados) {
+  memoriaDados.delete(chave);
+  memoriaDados.set(chave, dados);
+  if (memoriaDados.size > MEMORIA_MAX) memoriaDados.delete(memoriaDados.keys().next().value);
+}
+
+export function useDados(fn, deps = [], { automatico = true, memoria = null } = {}) {
+  const chaveMemoria = memoria ? `${memoria}|${JSON.stringify(deps)}` : null;
+  const [estado, setEstado] = useState(() => ({ dados: (chaveMemoria && memoriaDados.get(chaveMemoria)) ?? null, erro: null, carregando: true }));
   const [n, setN] = useState(0);
   const [silencioso, setSilencioso] = useState(0);
   const fnRef = useRef(fn);
@@ -290,10 +301,11 @@ export function useDados(fn, deps = [], { automatico = true } = {}) {
   const forcar = useRef(false);
   useEffect(() => {
     let vivo = true;
-    setEstado((e) => ({ ...e, carregando: true }));
+    const guardado = chaveMemoria && !forcar.current ? memoriaDados.get(chaveMemoria) : undefined;
+    setEstado((e) => ({ ...e, dados: guardado ?? e.dados, carregando: true }));
     const pedido = fnRef.current({ forcar: forcar.current });
     forcar.current = false;
-    pedido.then((dados) => vivo && setEstado({ dados, erro: null, carregando: false }))
+    pedido.then((dados) => { if (chaveMemoria) guardarNaMemoria(chaveMemoria, dados); if (vivo) setEstado({ dados, erro: null, carregando: false }); })
       .catch((erro) => vivo && setEstado({ dados: null, erro, carregando: false }));
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
