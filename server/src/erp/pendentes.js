@@ -55,6 +55,22 @@ const SQL = `SELECT x.CHVNEL, x.NUMNFC, x.CODSNF, x.TIPNFE, x.TIPOPE, x.DATEMI, 
   WHERE (((x.DATEMI >= @desde AND x.DATEMI <= @ate) OR (x.DATENT >= @desde AND x.DATENT <= @ate))
       OR (x.DATEMI >= @abertasDesde AND NOT EXISTS (SELECT 1 FROM E440NFC n3 WHERE n3.CHVNEL = x.CHVNEL AND n3.SITNFC <> '3'))){somenteAbertas}`;
 
+// Série "chegada × lançamento": XMLs recebidos por dia de chegada (só destinados às filiais do grupo), quantos
+// deles ainda não viraram entrada, e entradas lançadas por dia de lançamento a partir de um XML recebido.
+const SQL_SERIE = `SELECT 'R' AS TIPO, CAST(x.DATENT AS date) AS D, fi.CODEMP, fi.CODFIL, COUNT(*) AS N,
+    SUM(CASE WHEN nl.L IS NULL THEN 1 ELSE 0 END) AS PEND
+  FROM E000NFC x
+  CROSS APPLY (SELECT TOP 1 fi.CODEMP, fi.CODFIL FROM E070FIL fi WHERE fi.NUMCGC = x.CGCFIL ORDER BY fi.CODEMP, fi.CODFIL) fi
+  OUTER APPLY (SELECT TOP 1 1 AS L FROM E440NFC n WHERE n.CHVNEL = x.CHVNEL AND n.SITNFC <> '3') nl
+  WHERE x.DATENT >= @desde AND x.DATENT <= @ate
+  GROUP BY CAST(x.DATENT AS date), fi.CODEMP, fi.CODFIL
+  UNION ALL
+  SELECT 'L', CAST(n.DATGER AS date), n.CODEMP, n.CODFIL, COUNT(*), 0
+  FROM E440NFC n
+  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'
+    AND EXISTS (SELECT 1 FROM E000NFC x WHERE x.CHVNEL = n.CHVNEL)
+  GROUP BY CAST(n.DATGER AS date), n.CODEMP, n.CODFIL`;
+
 // Modelo do documento pela chave de acesso (posições 21-22), usado enquanto a nota não tem série no Senior
 const MODELOS = { 55: 'NF-e', 57: 'CT-e', 65: 'NFC-e', 58: 'MDF-e', 59: 'SAT', 67: 'CT-e OS' };
 const modeloDaChave = (chave) => MODELOS[Number(String(chave ?? '').slice(20, 22))] ?? null;
@@ -199,15 +215,28 @@ export async function painelPendentes(filtros = {}) {
   }));
   const doDia = (lista, campo) => lista.filter((i) => i[campo] === dia);
 
-  // Série diária dos últimos 21 dias: o que chegou x o que foi lançado
+  // Série diária dos últimos 21 dias: o que chegou x o que foi lançado. Consulta própria: a lista acima
+  // depende do período/filtros (no "Tudo em aberto" nem tem notas lançadas) e não serve para isso.
   const dias = Array.from({ length: 21 }, (_, k) => new Date(Date.now() - (20 - k) * 86400000).toLocaleDateString('sv-SE'));
-  // Uma passada só pela lista (antes eram 3 filtros por dia sobre todas as notas)
   const porDia = new Map(dias.map((d) => [d, { dia: d, recebidas: 0, lancadas: 0, pendentes: 0 }]));
-  for (const i of itens) {
-    const r = porDia.get(i.recebido_em);
-    if (r) { r.recebidas += 1; if (!i.lancada) r.pendentes += 1; }
-    const e = porDia.get(i.entrada?.data);
-    if (e) e.lancadas += 1;
+  try {
+    const desdeSerie = new Date(`${dias[0]}T00:00:00Z`);
+    const linhasSerie = await comCache(`pendentes-serie|${dia}`, filtros.forcar === '1' ? 0 : 300_000,
+      () => consultar(SQL_SERIE, desdeSerie, { ate: new Date(`${dia}T23:59:59Z`) }));
+    for (const l of linhasSerie) {
+      const empresaSerie = `${l.CODEMP}/${l.CODFIL}`;
+      if (filtros.empresa && empresaSerie !== filtros.empresa) continue;
+      if (excluidas.includes(empresaSerie)) continue;
+      const r = porDia.get(iso(l.D));
+      if (!r) continue;
+      if (l.TIPO === 'R') { r.recebidas += Number(l.N); r.pendentes += Number(l.PEND); } else r.lancadas += Number(l.N);
+    }
+  } catch {
+    // sem a consulta, cai para o que dá para tirar da lista
+    for (const i of itens) {
+      const r = porDia.get(i.recebido_em);
+      if (r) { r.recebidas += 1; if (!i.lancada) r.pendentes += 1; }
+    }
   }
   const serie = [...porDia.values()];
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { Topo } from '../contexto.jsx';
 import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
@@ -201,34 +201,26 @@ function PainelPendentes() {
             </div>
 
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
-              <Cartao titulo="Chegada × lançamento" sub="últimos 21 dias · quanto entrou e quanto foi lançado por dia">
+              <Cartao titulo="Chegada × lançamento" sub="últimos 21 dias · XMLs recebidos por dia e notas lançadas por dia (a partir de XML)">
                 <div className="grafico-legenda">
-                  <span><i style={{ background: 'var(--serie-1)' }} />Recebidas</span>
-                  <span><i style={{ background: 'var(--status-bom)' }} />Lançadas</span>
-                  <span><i style={{ background: 'var(--status-critico)' }} />Ainda pendentes do dia</span>
+                  <span><i style={{ background: 'var(--serie-1)' }} />Recebidas no dia</span>
+                  <span><i style={{ background: 'var(--status-bom)' }} />Lançadas no dia</span>
+                  <span><i style={{ background: 'var(--status-critico)', height: 2, borderRadius: 0, verticalAlign: 3 }} />Das recebidas no dia, ainda sem lançar</span>
                 </div>
-                <ResponsiveContainer width="100%" height={230}>
-                  <AreaChart data={dados.serie} margin={{ left: -20, right: 12, top: 22 }}>
-                    <defs>
-                      <linearGradient id="gRec" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--serie-1)" stopOpacity={0.45} />
-                        <stop offset="100%" stopColor="var(--serie-1)" stopOpacity={0.04} />
-                      </linearGradient>
-                      <linearGradient id="gLan" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--status-bom)" stopOpacity={0.4} />
-                        <stop offset="100%" stopColor="var(--status-bom)" stopOpacity={0.04} />
-                      </linearGradient>
-                    </defs>
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart data={dados.serie.filter((d) => d.recebidas || d.lancadas)} margin={{ left: 0, right: 8, top: 20 }} barCategoryGap="18%" barGap={1}>
                     <CartesianGrid vertical={false} stroke="var(--grade)" />
-                    <XAxis dataKey="dia" tickFormatter={diaCurto} tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} minTickGap={12} />
-                    <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={44} />
-                    <Tooltip content={<Dica sufixo="Dia" />} cursor={{ stroke: 'var(--eixo)' }} />
-                    <Area isAnimationActive={false} type="monotone" dataKey="recebidas" name="Recebidas" stroke="var(--serie-1)" fill="url(#gRec)" strokeWidth={2}>
-                      <LabelList dataKey="recebidas" position="top" style={ROTULO} formatter={(v) => (v ? numero(v) : '')} />
-                    </Area>
-                    <Area isAnimationActive={false} type="monotone" dataKey="lancadas" name="Lançadas" stroke="var(--status-bom)" fill="url(#gLan)" strokeWidth={2} />
-                    <Area isAnimationActive={false} type="monotone" dataKey="pendentes" name="Ainda pendentes" stroke="var(--status-critico)" fill="none" strokeWidth={2} strokeDasharray="4 3" />
-                  </AreaChart>
+                    <XAxis dataKey="dia" tickFormatter={diaCurto} tick={eixo} axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} minTickGap={6} />
+                    <YAxis allowDecimals={false} tick={eixo} axisLine={false} tickLine={false} width={36} />
+                    <Tooltip content={<Dica sufixo="Dia" />} cursor={{ fill: 'var(--superficie-3)' }} />
+                    <Bar isAnimationActive={false} dataKey="recebidas" name="Recebidas" fill="var(--serie-1)" radius={[3, 3, 0, 0]} maxBarSize={18}>
+                      <LabelList dataKey="recebidas" position="top" style={{ ...ROTULO, fontSize: 9 }} formatter={(v) => (v ? numero(v) : '')} />
+                    </Bar>
+                    <Bar isAnimationActive={false} dataKey="lancadas" name="Lançadas" fill="var(--status-bom)" radius={[3, 3, 0, 0]} maxBarSize={18}>
+                      <LabelList dataKey="lancadas" position="top" style={{ ...ROTULO, fontSize: 9 }} formatter={(v) => (v ? numero(v) : '')} />
+                    </Bar>
+                    <Line isAnimationActive={false} type="linear" dataKey="pendentes" name="Ainda sem lançar" stroke="var(--status-critico)" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: 'var(--status-critico)' }} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </Cartao>
 
