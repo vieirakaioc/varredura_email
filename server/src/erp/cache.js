@@ -114,3 +114,9 @@ setInterval(() => {
 export const ateOMinuto = (d) => new Date(d).toISOString().slice(0, 16);
 
 export function limparCache() { entradas.clear(); }
+
+/**
+ * Marca curta do SQL, para entrar na chave do cache: mudou a consulta (uma coluna nova, por exemplo),
+ * a chave muda e o resultado antigo — inclusive a cópia em disco — deixa de ser usado.
+ */
+export const versaoSql = (sql) => crypto.createHash('sha1').update(String(sql)).digest('hex').slice(0, 8);

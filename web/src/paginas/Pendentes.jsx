@@ -254,7 +254,9 @@ function PainelPendentes() {
             <div className="muted pequeno">
               {dados.tudo_aberto
                 ? <>Fonte: <strong>todos</strong> os XMLs do recebimento do Senior que ainda não viraram nota de entrada, sem limite de data (a consulta já exclui as lançadas, por isso os cartões de “lançadas” não aparecem). </>
-                : <>Fonte: XMLs recebidos no Senior entre {data(dados.periodo.de)} e {data(dados.periodo.ate)}, mais <strong>todos os ainda não lançados</strong> dos últimos 12 meses (para mais antigos, use “Tudo em aberto”). </>}
+                : dados.foco_mes
+                  ? <>Fonte: <strong>somente</strong> os XMLs recebidos ou emitidos entre {data(dados.periodo.de)} e {data(dados.periodo.ate)} — a tela inteira está focada no mês. Para ver pendências de outros meses, troque para “Por período (dias)” ou “Tudo em aberto”. </>
+                  : <>Fonte: XMLs recebidos no Senior entre {data(dados.periodo.de)} e {data(dados.periodo.ate)}, mais <strong>todos os ainda não lançados</strong> dos últimos 12 meses (para mais antigos, use “Tudo em aberto”). </>}
               Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
             </div>
 
@@ -275,9 +277,11 @@ function PainelPendentes() {
               </div>
             )}
 
+            {dados.fluxo && dados.fluxo.situacao !== 'sem_dados' && <FluxoDaFila fluxo={dados.fluxo} />}
+
             <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)' }}>
               <Cartao titulo="Chegada × lançamento"
-                sub={visaoSerie === 'acumulado' ? 'últimos 21 dias · soma dia a dia: se o saldo sobe, as notas estão acumulando' : 'últimos 21 dias · XMLs recebidos por dia e notas lançadas por dia (a partir de XML)'}
+                sub={`${dados.foco_mes ? `${data(dados.serie_periodo.de)} a ${data(dados.serie_periodo.ate)}` : 'últimos 21 dias'} · ${visaoSerie === 'acumulado' ? 'soma dia a dia: se o saldo sobe, as notas estão acumulando' : 'XMLs recebidos por dia e notas lançadas por dia (a partir de XML)'}`}
                 acoes={<div className="linha" style={{ gap: 2 }}>
                   {[['diario', 'Diário'], ['acumulado', 'Acumulado']].map(([v, r]) => (
                     <button key={v} className={`btn pequeno ${visaoSerie === v ? '' : 'ghost'}`} onClick={() => trocarVisaoSerie(v)}>{r}</button>
@@ -644,5 +648,55 @@ function SerieAcumulada({ serie }) {
         <div className="muted pequeno">O saldo mostra só o movimento destes 21 dias; o total em aberto de antes está no cartão “Pendentes de lançamento”.</div>
       )}
     </>
+  );
+}
+
+/**
+ * Responde em uma olhada a pergunta "o time está deixando nota acumular?".
+ * Tudo vem da série recebidas × lançadas do período e da fila em aberto — nada de tempo presumido.
+ */
+function FluxoDaFila({ fluxo }) {
+  const veredito = {
+    acumulando: { texto: 'A fila está acumulando', cor: 'var(--status-critico)' },
+    reduzindo: { texto: 'A fila está diminuindo', cor: 'var(--status-bom)' },
+    equilibrio: { texto: 'Entra e sai no mesmo ritmo', cor: 'var(--status-atencao)' },
+  }[fluxo.situacao] ?? { texto: 'Sem dados no período', cor: 'var(--texto-fraco)' };
+  const tendencia = {
+    piorando: { texto: 'piorando na segunda metade do período', cor: 'var(--status-critico)' },
+    melhorando: { texto: 'melhorando na segunda metade do período', cor: 'var(--status-bom)' },
+    estavel: { texto: 'estável nas duas metades do período', cor: 'var(--texto-fraco)' },
+  }[fluxo.tendencia];
+  const Numero = ({ rotulo, valor, detalhe, cor }) => (
+    <div style={{ minWidth: 150 }}>
+      <div className="muted pequeno">{rotulo}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, color: cor }}>{valor}</div>
+      {detalhe && <div className="muted pequeno">{detalhe}</div>}
+    </div>
+  );
+  return (
+    <Cartao titulo="O time está deixando nota acumular?"
+      sub={`${data(fluxo.de)} a ${data(fluxo.ate)} · o que chegou contra o que foi lançado`}>
+      <div className="linha" style={{ gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <Numero rotulo="Veredito" valor={veredito.texto} cor={veredito.cor}
+          detalhe={tendencia ? `e ${tendencia.texto}` : null} />
+        <Numero rotulo="Taxa de atendimento" valor={`${numero(fluxo.taxa_atendimento)}%`}
+          cor={fluxo.taxa_atendimento >= 100 ? 'var(--status-bom)' : fluxo.taxa_atendimento >= 95 ? 'var(--status-atencao)' : 'var(--status-critico)'}
+          detalhe={`${numero(fluxo.lancadas)} lançadas de ${numero(fluxo.recebidas)} recebidas`} />
+        <Numero rotulo="Saldo do período" valor={`${fluxo.saldo > 0 ? '+' : ''}${numero(fluxo.saldo)}`}
+          cor={fluxo.saldo > 0 ? 'var(--status-critico)' : 'var(--status-bom)'}
+          detalhe={fluxo.saldo > 0 ? 'notas que entraram na fila' : 'notas tiradas da fila'} />
+        <Numero rotulo="Fila hoje" valor={numero(fluxo.fila)}
+          detalhe={`${numero(fluxo.paradas_mais_5)} paradas há mais de 5 dias`} />
+        <Numero rotulo="Para zerar a fila" valor={fluxo.dias_para_zerar != null ? `${numero(fluxo.dias_para_zerar, 1)} dia(s)` : '—'}
+          detalhe={fluxo.ritmo_dia != null ? `no ritmo de ${numero(fluxo.ritmo_dia, 1)} notas/dia` : null} />
+        {fluxo.no_prazo != null && <Numero rotulo="Lançadas em até 2 dias" valor={`${numero(fluxo.no_prazo)}%`}
+          cor={fluxo.no_prazo >= 90 ? 'var(--status-bom)' : fluxo.no_prazo >= 70 ? 'var(--status-atencao)' : 'var(--status-critico)'}
+          detalhe={`prazo médio de ${numero(fluxo.prazo_medio, 1)} dia(s) do recebimento ao lançamento`} />}
+      </div>
+      <p className="muted pequeno" style={{ marginBottom: 0 }}>
+        Taxa acima de 100% quer dizer que o time lançou mais do que chegou, tirando atraso da fila. Abaixo de 100%, a fila cresce —
+        e “para zerar a fila” mostra em quantos dias ela acabaria se nada mais chegasse.
+      </p>
+    </Cartao>
   );
 }

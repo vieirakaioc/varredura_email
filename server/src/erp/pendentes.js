@@ -5,7 +5,7 @@
 // Cancelamentos conhecidos (SEFAZ / saída do Senior) são destacados: não devem ser lançados.
 import { all, get, getConfig, run } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
-import { comCache } from './cache.js';
+import { comCache, versaoSql } from './cache.js';
 import { CATEGORIAS, categoriaDe, colunasItem, regraBiomassa, sqlMarcasItem } from './categorias.js';
 
 const ESPECIES = { NFE: 'NF-e', CTE: 'CT-e', NF2: 'NF-e (série 2)', NF: 'Nota fiscal', CTR: 'CT-e (redespacho)' };
@@ -39,10 +39,10 @@ const SQL = `SELECT x.CHVNEL, x.NUMNFC, x.CODSNF, x.TIPNFE, x.TIPOPE, x.DATEMI, 
     CASE WHEN EXISTS (SELECT 1 FROM E000ISC isv WHERE isv.CHVNEL = x.CHVNEL) THEN 1 ELSE 0 END AS TEM_SERVICO,
     x.CGCFOR, x.CGCFIL, fi.CODEMP, fi.CODFIL, fi.NOMFIL, fi.SIGFIL, fi.SIGUFS, fd.NOMFOR AS NOME_DESTINO,
     fe.CODEMP AS EMIT_CODEMP, fe.CODFIL AS EMIT_CODFIL, fe.NOMFIL AS EMIT_NOMFIL, fe.SIGFIL AS EMIT_SIGFIL, fe.SIGUFS AS EMIT_SIGUFS,
-    n.NUMNFC AS ENTRADA_NUM, n.CODSNF AS ENTRADA_SERIE, n.DATENT AS ENTRADA_DATA, n.SITNFC AS ENTRADA_SITUACAO,
+    n.NUMNFC AS ENTRADA_NUM, n.CODSNF AS ENTRADA_SERIE, n.DATENT AS ENTRADA_DATA, n.DATGER AS ENTRADA_LANCADA_EM, n.SITNFC AS ENTRADA_SITUACAO,
     sa.NUMNFV AS SAIDA_NUM{marcas}
   FROM E000NFC x
-  OUTER APPLY (SELECT TOP 1 n.NUMNFC, n.CODSNF, n.DATENT, n.SITNFC FROM E440NFC n
+  OUTER APPLY (SELECT TOP 1 n.NUMNFC, n.CODSNF, n.DATENT, n.DATGER, n.SITNFC FROM E440NFC n
     WHERE n.CHVNEL = x.CHVNEL AND n.SITNFC <> '3' ORDER BY n.DATENT DESC) n
   OUTER APPLY (SELECT TOP 1 sa.NUMNFV FROM E140IDE sa WHERE sa.CHVDOE = x.CHVNEL) sa
   OUTER APPLY (SELECT TOP 1 fi.CODEMP, fi.CODFIL, fi.NOMFIL, fi.SIGFIL, fi.SIGUFS FROM E070FIL fi
@@ -156,7 +156,7 @@ function montarItem(l, canceladas, dia) {
     empresa: String(dest.SIGFIL ?? '').trim() || String(dest.NOMFIL ?? '').trim() || String(l.NOME_DESTINO ?? '').trim() || 'Empresa não identificada',
     empresa_do_grupo: dest.CODEMP != null,
     uf: String(dest.SIGUFS ?? '').trim() || null,
-    lancada, entrada: lancada ? { numero: l.ENTRADA_NUM, serie: String(l.ENTRADA_SERIE ?? '').trim(), data: iso(l.ENTRADA_DATA), situacao: String(l.ENTRADA_SITUACAO ?? '').trim() } : null,
+    lancada, entrada: lancada ? { numero: l.ENTRADA_NUM, serie: String(l.ENTRADA_SERIE ?? '').trim(), data: iso(l.ENTRADA_DATA), lancada_em: iso(l.ENTRADA_LANCADA_EM), situacao: String(l.ENTRADA_SITUACAO ?? '').trim() } : null,
     nossa_saida: nossaSaida,
     entrada_propria: entradaPropria,
     transferencia,
@@ -202,17 +202,27 @@ export async function painelPendentes(filtros = {}) {
   // então ela fica em cache por cinco minutos ("Atualizar" na tela força a leitura no banco).
   const cols = await colunasItem();
   const marcas = sqlMarcasItem(cols, 'x.CHVNEL', 'fo.NOMFOR');
-  const sql = SQL.replace('{marcas}', marcas).replace('{somenteAbertas}', tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '');
+  const sql = SQL
+    .replace('{marcas}', marcas)
+    .replace('{somenteAbertas}', tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '');
   // A chave usa o filtro pedido, não as datas calculadas: "últimos 60 dias" vira um Date diferente
   // a cada chamada e o cache nunca seria aproveitado.
   // A série do gráfico "chegada × lançamento" é outra consulta: começa junto, sem esperar a principal
   const hojeSerie = hoje();
-  const diasSerie = Array.from({ length: 21 }, (_, k) => new Date(Date.now() - (20 - k) * 86400000).toLocaleDateString('sv-SE'));
-  const serieAsync = comCache(`pendentes-serie|${hojeSerie}`, filtros.forcar === '1' ? 0 : 300_000,
-    () => consultar(SQL_SERIE, new Date(`${diasSerie[0]}T00:00:00Z`), { ate: new Date(`${hojeSerie}T23:59:59Z`) }));
+  // Com mês escolhido a série cobre o mês (até hoje, se for o mês corrente); senão, os últimos 21 dias
+  const fimSerie = mes ? (ultimoDia < hojeSerie ? ultimoDia : hojeSerie) : hojeSerie;
+  const inicioSerie = mes ? `${mes}-01` : new Date(Date.now() - 20 * 86400000).toLocaleDateString('sv-SE');
+  const diasSerie = [];
+  for (let d = new Date(`${inicioSerie}T12:00:00Z`); diasSerie.length < 62; d.setUTCDate(d.getUTCDate() + 1)) {
+    const texto = d.toISOString().slice(0, 10);
+    if (texto > fimSerie) break;
+    diasSerie.push(texto);
+  }
+  const serieAsync = comCache(`pendentes-serie|${versaoSql(SQL_SERIE)}|${inicioSerie}|${fimSerie}`, filtros.forcar === '1' ? 0 : 300_000,
+    () => consultar(SQL_SERIE, new Date(`${inicioSerie}T00:00:00Z`), { ate: new Date(`${fimSerie}T23:59:59Z`) }));
   serieAsync.catch(() => {}); // o erro é tratado lá embaixo
   const linhas = await comCache(
-    `pendentes5|${marcas.length}|${JSON.stringify(regraBiomassa())}|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
+    `pendentes|${versaoSql(sql)}|${JSON.stringify(regraBiomassa())}|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
     filtros.forcar === '1' ? 0 : 300_000,
     () => consultar(sql, de, { ate, abertasDesde: new Date(Date.now() - DIAS_ABERTAS * 86400000) }),
   );
@@ -231,6 +241,13 @@ export async function painelPendentes(filtros = {}) {
     return m ? { ...i, motivo: m.motivo, motivo_rotulo: MOTIVOS[m.motivo] ?? m.motivo, motivo_obs: m.observacao, motivo_por: m.usuario, motivo_em: m.atualizado_em } : i;
   });
 
+  // Mês escolhido: a tela inteira olha só aquele mês. O corte é feito aqui, e não no WHERE, porque
+  // tirar de lá a cláusula das notas em aberto faz o SQL Server trocar de plano e a consulta de um
+  // mês fechado pula de ~18s para ~190s.
+  if (mes) {
+    const noMes = (d) => d != null && d >= `${mes}-01` && d <= ultimoDia;
+    itens = itens.filter((i) => noMes(i.emissao) || noMes(i.recebido_em));
+  }
   if (filtros.codemp) itens = itens.filter((i) => String(i.codemp) === String(filtros.codemp) && (!filtros.codfil || String(i.codfil) === String(filtros.codfil)));
   // A base do Senior também recebe XMLs de terceiros: por padrão, só o que é destinado ao grupo
   const foraDoGrupo = itens.filter((i) => !i.empresa_do_grupo).length;
@@ -313,6 +330,38 @@ export async function painelPendentes(filtros = {}) {
   }
   const serie = [...porDia.values()];
 
+  // ---------------------------------------------------------------- a fila está acumulando?
+  // Tudo sai da série (recebidas × lançadas por dia) e da fila em aberto do recorte atual.
+  const somaSerie = (lista, campo) => lista.reduce((t, d) => t + d[campo], 0);
+  const recebidasSerie = somaSerie(serie, 'recebidas');
+  const lancadasSerie = somaSerie(serie, 'lancadas');
+  const diasComLancamento = serie.filter((d) => d.lancadas > 0).length;
+  const ritmoDia = diasComLancamento ? lancadasSerie / diasComLancamento : 0;
+  const metade = Math.floor(serie.length / 2);
+  const saldoRecente = somaSerie(serie.slice(serie.length - metade), 'recebidas') - somaSerie(serie.slice(serie.length - metade), 'lancadas');
+  const saldoAnterior = somaSerie(serie.slice(0, metade), 'recebidas') - somaSerie(serie.slice(0, metade), 'lancadas');
+  // Prazo de quem já foi lançada: do recebimento do XML até a entrada no Senior
+  const prazos = lancadas.map((i) => (i.recebido_em && i.entrada?.lancada_em ? Math.max(0, diasEntre(i.recebido_em, i.entrada.lancada_em)) : null)).filter((v) => v != null);
+  const saldoSerie = recebidasSerie - lancadasSerie;
+  const fluxo = {
+    dias: serie.length, de: serie[0]?.dia ?? null, ate: serie.at(-1)?.dia ?? null,
+    recebidas: recebidasSerie, lancadas: lancadasSerie, saldo: saldoSerie,
+    // acima de 100% o time está tirando da fila; abaixo, está deixando acumular
+    taxa_atendimento: recebidasSerie ? Math.round((lancadasSerie / recebidasSerie) * 100) : null,
+    situacao: !recebidasSerie ? 'sem_dados'
+      : saldoSerie > recebidasSerie * 0.05 ? 'acumulando'
+        : saldoSerie < -(recebidasSerie * 0.05) ? 'reduzindo' : 'equilibrio',
+    fila: pendentes.length,
+    ritmo_dia: diasComLancamento ? Math.round(ritmoDia * 10) / 10 : null,
+    dias_para_zerar: ritmoDia > 0 ? Math.round((pendentes.length / ritmoDia) * 10) / 10 : null,
+    // metade recente da série contra a metade anterior: a fila está piorando ou melhorando?
+    saldo_recente: saldoRecente, saldo_anterior: saldoAnterior,
+    tendencia: metade < 2 ? null : saldoRecente > saldoAnterior ? 'piorando' : saldoRecente < saldoAnterior ? 'melhorando' : 'estavel',
+    prazo_medio: prazos.length ? Math.round((prazos.reduce((t, v) => t + v, 0) / prazos.length) * 10) / 10 : null,
+    no_prazo: prazos.length ? Math.round((prazos.filter((v) => v <= 2).length / prazos.length) * 100) : null,
+    paradas_mais_5: pendentes.filter((i) => (i.dias_parada ?? 0) > 5).length,
+  };
+
   const agrupar = (lista, chave, rotulo) => [...lista.reduce((m, i) => {
     const k = chave(i) ?? '—';
     const atual = m.get(k) ?? { chave: k, rotulo: rotulo(i), qtd: 0, valor: 0 };
@@ -329,8 +378,10 @@ export async function painelPendentes(filtros = {}) {
   ];
 
   return {
-    periodo: { de: de.toLocaleDateString('sv-SE'), ate: ate.toLocaleDateString('sv-SE') },
-    tudo_aberto: tudoAberto,
+    // As datas do período são montadas em UTC; convertê-las para o fuso local tirava um dia do início
+    periodo: { de: de.toISOString().slice(0, 10), ate: ate.toISOString().slice(0, 10) },
+    tudo_aberto: tudoAberto, foco_mes: mes, serie_periodo: { de: inicioSerie, ate: fimSerie },
+    fluxo,
     empresas_disponiveis: empresasDisponiveis, sem_empresas: excluidas,
     indicadores: {
       pendentes: pendentes.length, pendentes_valor: soma(pendentes, (i) => i.valor),
