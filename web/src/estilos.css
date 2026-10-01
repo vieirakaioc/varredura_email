@@ -340,3 +340,9 @@ pre.json { background: var(--superficie-2); border: 1px solid var(--borda); bord
   .alerta-fluxo { grid-template-columns: 1fr; }
   .alerta-fluxo > div { border-right: none; border-bottom: 1px solid var(--borda); }
 }
+
+/* troca de período/filtro: aviso fixo e conteúdo antigo esmaecido até os dados novos chegarem */
+.aviso-carregando { position: sticky; top: 8px; z-index: 30; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 8px; background: var(--marca-suave); border: 1px solid color-mix(in srgb, var(--marca-2) 35%, transparent); color: var(--texto); font-size: 13px; font-weight: 600; box-shadow: var(--sombra); }
+.girando { width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--marca-2) 30%, transparent); border-top-color: var(--marca-2); animation: girar .8s linear infinite; flex: none; }
+@keyframes girar { to { transform: rotate(360deg); } }
+.desatualizado { opacity: .4; pointer-events: none; filter: grayscale(.4); transition: opacity .15s; }

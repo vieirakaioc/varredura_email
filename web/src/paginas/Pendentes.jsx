@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { Topo, useAuth } from '../contexto.jsx';
-import { brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
+import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 import Lancamentos from './Lancamentos.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
@@ -17,7 +17,8 @@ const COR_FAIXA = ['var(--status-bom)', 'var(--serie-1)', 'var(--status-atencao)
 const ROTULO = { fontSize: 10, fill: 'var(--texto-2)', fontWeight: 600 };
 const NOMES_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 // Últimos 12 meses para o filtro de período
-const MESES_FILTRO = Array.from({ length: 12 }, (_, i) => {
+// Calculado a cada uso: com a tela aberta na virada do mês, o mês novo aparece sem recarregar a página
+const mesesFiltro = () => Array.from({ length: 12 }, (_, i) => {
   const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
   return { valor: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, rotulo: `${NOMES_MES[d.getMonth()]}/${d.getFullYear()}` };
 });
@@ -146,7 +147,7 @@ function PainelPendentes() {
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ ...f, [k]: v }).filter(([, x]) => x !== '' && x != null)));
   const { permissoes } = useAuth();
   const podeMotivo = permissoes.includes('decidir');
-  const { dados, erro, carregando, recarregar, atualizar } = useDados(
+  const { dados, erro, carregando, recarregar, atualizar, trocando } = useDados(
     ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel, motivo: f.motivo, categoria: f.categoria })}`),
     [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel, f.motivo, f.categoria], { automatico: false, memoria: 'pendentes' },
   );
@@ -163,7 +164,7 @@ function PainelPendentes() {
         <div className="linha" style={{ gap: 14, flexWrap: 'wrap' }}>
           <select value={f.mes} onChange={(e) => setFiltro('mes', e.target.value)} aria-label="Mês">
             <option value="">Por período (dias)</option>
-            {MESES_FILTRO.map((m) => <option key={m.valor} value={m.valor}>{m.rotulo}</option>)}
+            {mesesFiltro().map((m) => <option key={m.valor} value={m.valor}>{m.rotulo}</option>)}
           </select>
           <select value={f.dias} onChange={(e) => setFiltro('dias', e.target.value)} aria-label="Período" disabled={Boolean(f.mes)}>
             {[15, 30, 60, 90, 180].map((d) => <option key={d} value={d}>Últimos {d} dias</option>)}
@@ -234,6 +235,8 @@ function PainelPendentes() {
       {dados && !dados.responsavel_identificado && (
         <div className="aviso atencao pequeno">Não encontrei no Senior a coluna de descrição dos itens do XML (tabela E000IPC): as notas do Faturamento (bagaço, madeira, cavaco) não estão sendo separadas. Abra o Diagnóstico e me envie a lista de colunas.</div>
       )}
+        <AvisoCarregando ativo={trocando} texto={`Carregando ${f.mes ? (mesesFiltro().find((m) => m.valor === f.mes)?.rotulo ?? f.mes) : f.dias === 'tudo' ? 'tudo em aberto' : `últimos ${f.dias} dias`}…`} />
+        <div className={`coluna ${trocando ? 'desatualizado' : ''}`} style={{ gap: 18 }}>
         {carregando && !dados ? <Carregando /> : k && (
           <>
             <div className="grade grade-kpi monetario">
@@ -490,6 +493,7 @@ function PainelPendentes() {
             </div>
           )}
         </Cartao>
+        </div>
     </>
   );
 }

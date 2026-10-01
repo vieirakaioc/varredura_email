@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { useAuth } from '../contexto.jsx';
-import { brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
+import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
 // rótulo de dados em cima das colunas
@@ -111,7 +111,7 @@ export default function Lancamentos() {
   const ativos = ['categoria', 'equipe', 'dia', 'hora', 'usuario', 'empresa', 'origem'].filter((c) => f[c] !== '');
   const { permissoes } = useAuth();
   const podeMeta = permissoes.includes('administrar');
-  const { dados, erro, carregando, recarregar, atualizar } = useDados(
+  const { dados, erro, carregando, recarregar, atualizar, trocando } = useDados(
     ({ forcar } = {}) => api.get(`/lancamentos${qs({ forcar: forcar ? '1' : '', mes, dias: mes ? '' : f.dias, usuario: f.usuario, base: f.base, situacoes: f.situacoes, empresa: f.empresa, dia: f.dia, hora: f.hora, origem: f.origem, equipe: f.equipe, categoria: f.categoria })}`),
     [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa, f.dia, f.hora, f.origem, f.equipe, f.categoria], { automatico: false, memoria: 'lancamentos' },
   );
@@ -210,8 +210,9 @@ export default function Lancamentos() {
         </div>
       )}
       <Erro erro={erro} />
+      <AvisoCarregando ativo={trocando} texto={`Carregando ${mes ? (mesesDisponiveis().find((m) => m.valor === mes)?.rotulo ?? mes) : `últimos ${f.dias} dias`}…`} />
       {carregando && !dados ? <Carregando /> : k && (
-        <>
+        <div className={`coluna ${trocando ? 'desatualizado' : ''}`} style={{ gap: 18 }}>
           <div className="grade grade-kpi monetario quatro">
             <Kpi rotulo="Notas lançadas" valor={numero(k.notas)} detalhe={`${brl(k.valor)} · ${numero(k.com_xml ?? 0)} de XML`} cor="var(--serie-1)"
               titulo={`Todas as notas de entrada do período (${dados.base === 'entrada' ? 'pela data de entrada' : 'pela data do lançamento'}), inclusive digitadas. A aba Pendentes conta só as que vieram de XML recebido.`} />
@@ -530,7 +531,7 @@ export default function Lancamentos() {
               </div>
             )}
           </Cartao>
-        </>
+        </div>
       )}
     </>
   );

@@ -306,8 +306,13 @@ function guardarNaMemoria(chave, dados) {
 }
 
 export function useDados(fn, deps = [], { automatico = true, memoria = null } = {}) {
-  const chaveMemoria = memoria ? `${memoria}|${JSON.stringify(deps)}` : null;
-  const [estado, setEstado] = useState(() => ({ dados: (chaveMemoria && memoriaDados.get(chaveMemoria)?.dados) ?? null, erro: null, carregando: true }));
+  const chaveFiltros = JSON.stringify(deps);
+  const chaveMemoria = memoria ? `${memoria}|${chaveFiltros}` : null;
+  // `chave` = filtros a que os dados na tela pertencem: se for diferente dos atuais, a tela está trocando de período/filtro
+  const [estado, setEstado] = useState(() => {
+    const guardado = chaveMemoria && memoriaDados.get(chaveMemoria);
+    return { dados: guardado?.dados ?? null, chave: guardado ? chaveFiltros : null, erro: null, carregando: true };
+  });
   const ultimoN = useRef(0);
   const [n, setN] = useState(0);
   const [silencioso, setSilencioso] = useState(0);
@@ -323,21 +328,21 @@ export function useDados(fn, deps = [], { automatico = true, memoria = null } = 
     const pedidoExplicito = n !== ultimoN.current;
     ultimoN.current = n;
     if (guardado && !pedidoExplicito && Date.now() - guardado.em < MEMORIA_FRESCA_MS) {
-      setEstado({ dados: guardado.dados, erro: null, carregando: false });
+      setEstado({ dados: guardado.dados, chave: chaveFiltros, erro: null, carregando: false });
       return undefined;
     }
-    setEstado((e) => ({ ...e, dados: guardado?.dados ?? e.dados, carregando: true }));
+    setEstado((e) => (guardado ? { ...e, dados: guardado.dados, chave: chaveFiltros, carregando: true } : { ...e, carregando: true }));
     const pedido = fnRef.current({ forcar: forcar.current });
     forcar.current = false;
-    pedido.then((dados) => { if (chaveMemoria) guardarNaMemoria(chaveMemoria, dados); if (vivo) setEstado({ dados, erro: null, carregando: false }); })
-      .catch((erro) => vivo && setEstado({ dados: null, erro, carregando: false }));
+    pedido.then((dados) => { if (chaveMemoria) guardarNaMemoria(chaveMemoria, dados); if (vivo) setEstado({ dados, chave: chaveFiltros, erro: null, carregando: false }); })
+      .catch((erro) => vivo && setEstado({ dados: null, chave: null, erro, carregando: false }));
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, n]);
   useEffect(() => {
     if (!silencioso) return undefined;
     let vivo = true;
-    fnRef.current({}).then((dados) => vivo && setEstado({ dados, erro: null, carregando: false })).catch(() => {});
+    fnRef.current({}).then((dados) => vivo && setEstado({ dados, chave: chaveFiltros, erro: null, carregando: false })).catch(() => {});
     return () => { vivo = false; };
   }, [silencioso]);
   useEffect(() => {
@@ -350,10 +355,23 @@ export function useDados(fn, deps = [], { automatico = true, memoria = null } = 
   }, []);
   return {
     ...estado,
+    // dados na tela são de outro período/filtro e os novos ainda estão chegando
+    trocando: estado.carregando && estado.dados != null && estado.chave !== chaveFiltros,
     recarregar: () => { forcar.current = true; setN((x) => x + 1); },
     // relê pela API sem furar o cache do servidor (ex.: depois de salvar uma configuração local)
     atualizar: () => setN((x) => x + 1),
   };
+}
+
+/** Faixa fixa no topo enquanto a tela busca outro período/filtro (o conteúdo antigo fica esmaecido). */
+export function AvisoCarregando({ ativo, texto = 'Carregando os dados do novo filtro…' }) {
+  if (!ativo) return null;
+  return (
+    <div className="aviso-carregando" role="status" aria-live="polite">
+      <span className="girando" aria-hidden />{texto}
+      <span className="muted pequeno">consultando o Senior; pode levar alguns segundos na primeira vez</span>
+    </div>
+  );
 }
 
 export function Erro({ erro }) {

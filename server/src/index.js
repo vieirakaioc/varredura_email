@@ -107,6 +107,11 @@ app.listen(config.port, () => {
       ['pendentes (60 dias)', async () => (await import('./erp/pendentes.js')).painelPendentes({ dias: '60' })],
       ['pendentes (tudo em aberto)', async () => (await import('./erp/pendentes.js')).painelPendentes({ dias: 'tudo' })],
       ['produtividade (mês)', async () => (await import('./erp/lancamentos.js')).painelLancamentos({ mes, base: 'entrada' })],
+      // mês anterior: é a troca mais comum no começo do mês
+      ['produtividade (mês anterior)', async () => {
+        const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+        return (await import('./erp/lancamentos.js')).painelLancamentos({ mes: d.toLocaleDateString('sv-SE').slice(0, 7), base: 'entrada' });
+      }],
       ['histórico mensal', async () => (await import('./erp/lancamentos.js')).historicoMensal()],
     ];
     for (const [nome, tarefa] of tarefas) {  // uma por vez, para não sobrecarregar o banco do ERP
