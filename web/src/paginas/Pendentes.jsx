@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { Topo, useAuth } from '../contexto.jsx';
-import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
+import { brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 import Lancamentos from './Lancamentos.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
@@ -24,6 +24,11 @@ const MESES_FILTRO = Array.from({ length: 12 }, (_, i) => {
 
 // Cartões de ranking mostram os 5 primeiros; "Ver todas" abre o resto e o Excel leva a lista inteira
 const TOP = 5;
+const COLUNAS_CATEGORIA = [
+  { titulo: 'Tipo de nota', valor: (x) => x.rotulo },
+  { titulo: 'Notas pendentes', tipo: 'numero', valor: (x) => x.qtd },
+  { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor },
+];
 const COLUNAS_MOTIVO = [
   { titulo: 'Motivo', valor: (x) => x.rotulo },
   { titulo: 'Notas pendentes', tipo: 'numero', valor: (x) => x.qtd },
@@ -60,6 +65,7 @@ const COLUNAS_EXPORT = [
   { titulo: 'Tipo', valor: (l) => (l.tipo_movimento === 'saida' ? 'Saída' : l.entrada_propria ? 'Entrada própria' : l.transferencia ? 'Transferência' : 'Entrada') },
   { titulo: 'Entrada no Senior', tipo: 'data', valor: (l) => l.entrada?.data },
   { titulo: 'Observação do XML', valor: (l) => l.observacao },
+  { titulo: 'Tipo de nota', valor: (l) => l.categoria_rotulo },
   { titulo: 'Produto (1º item)', valor: (l) => l.produto },
   { titulo: 'Motivo de não lançar', valor: (l) => l.motivo_rotulo },
   { titulo: 'Observação do motivo', valor: (l) => l.motivo_obs },
@@ -116,7 +122,7 @@ function PainelPendentes() {
     tipo: params.get('tipo') ?? 'entradas',
     // quem lança: Escrita Fiscal (padrão) ou Faturamento (bagaço, madeira, cavaco...)
     responsavel: params.get('responsavel') ?? 'fiscal',
-    motivo: params.get('motivo') ?? '',
+    motivo: params.get('motivo') ?? '', categoria: params.get('categoria') ?? '',
     situacoes: params.get('situacoes') ?? 'pendente,inconsistente,incompleta',
     sem_empresas: params.get('sem_empresas') ?? '',
   };
@@ -141,8 +147,8 @@ function PainelPendentes() {
   const { permissoes } = useAuth();
   const podeMotivo = permissoes.includes('decidir');
   const { dados, erro, carregando, recarregar, atualizar } = useDados(
-    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel, motivo: f.motivo })}`),
-    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel, f.motivo], { automatico: false, memoria: 'pendentes' },
+    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel, motivo: f.motivo, categoria: f.categoria })}`),
+    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel, f.motivo, f.categoria], { automatico: false, memoria: 'pendentes' },
   );
   const k = dados?.indicadores;
   const itens = (dados?.itens ?? []).filter((l) => {
@@ -249,11 +255,13 @@ function PainelPendentes() {
               Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
             </div>
 
-            {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo) && (
+            {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo || f.categoria) && (
               <div className="linha pequeno" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <strong className="muted">Filtrando por:</strong>
                 {f.empresa && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('empresa', '')}>
                   Empresa: <strong>{codigoEmpresa(f.empresa)} {dados.por_empresa.find((x) => x.chave === f.empresa)?.rotulo ?? ''}</strong> ✕</button>}
+                {f.categoria && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('categoria', '')}>
+                  Tipo de nota: <strong>{dados.categorias?.[f.categoria] ?? f.categoria}</strong> ✕</button>}
                 {f.motivo && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('motivo', '')}>
                   Motivo: <strong>{dados.por_motivo?.find((x) => x.chave === f.motivo)?.rotulo ?? f.motivo}</strong> ✕</button>}
                 {f.especie && <button className="btn pequeno ghost" title="Tirar este filtro" onClick={() => setFiltro('especie', '')}>Documento: <strong>{f.especie}</strong> ✕</button>}
@@ -367,15 +375,24 @@ function PainelPendentes() {
                 </div>
               </Cartao>
 
-              <Cartao titulo="Por documento" semPadding>
+              <Cartao titulo="Por tipo de nota" semPadding
+                acoes={<BotaoExportar titulo="Pendentes por tipo de nota" linhas={dados.por_categoria ?? []} colunas={COLUNAS_CATEGORIA} rotulo="Excel" />}>
                 <div style={{ padding: 12 }}>
-                  {dados.por_especie.map((x) => (
-                    <button key={x.chave} className="linha entre" onClick={() => setFiltro('especie', f.especie === x.chave ? '' : x.chave)}
-                      style={{ width: '100%', background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', opacity: !f.especie || f.especie === x.chave ? 1 : 0.5 }}>
-                      <span className="tag azul">{x.rotulo}</span>
-                      <span><strong>{numero(x.qtd)}</strong> <span className="muted pequeno">{brlCurto(x.valor)}</span></span>
-                    </button>
-                  ))}
+                  {(dados.por_categoria ?? []).map((x) => {
+                    const max = Math.max(...(dados.por_categoria ?? []).map((y) => y.qtd), 1);
+                    const ativo = f.categoria === x.chave;
+                    return (
+                      <button key={x.chave} onClick={() => setFiltro('categoria', ativo ? '' : x.chave)}
+                        style={{ width: '100%', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', color: 'inherit', opacity: !f.categoria || ativo ? 1 : 0.45 }}>
+                        <div className="linha entre pequeno" style={{ flexWrap: 'nowrap' }}>
+                          <span className="truncar" style={{ fontWeight: ativo ? 650 : undefined }}>{x.rotulo}</span>
+                          <span className="nowrap"><strong>{numero(x.qtd)}</strong> <span className="muted">{brlCurto(x.valor)}</span></span>
+                        </div>
+                        <div className="barra-progresso"><div style={{ width: `${(x.qtd / max) * 100}%`, background: COR_CATEGORIA[x.chave] ?? 'var(--serie-1)' }} /></div>
+                      </button>
+                    );
+                  })}
+                  {!(dados.por_categoria ?? []).length && <div className="muted pequeno">Nada pendente.</div>}
                 </div>
               </Cartao>
 
@@ -417,7 +434,7 @@ function PainelPendentes() {
             <label className="linha pequeno" style={{ gap: 6 }} title="A base do Senior também recebe XMLs entre terceiros, que não são pendência do grupo">
               <input type="checkbox" checked={f.incluir_terceiros === '1'} onChange={(e) => setFiltro('incluir_terceiros', e.target.checked ? '1' : '')} />Incluir XMLs de terceiros{k?.fora_do_grupo ? ` (${numero(k.fora_do_grupo)})` : ''}
             </label>
-            {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo) && (
+            {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo || f.categoria) && (
               <button className="btn pequeno ghost" onClick={() => { setBusca(''); setParams({ dias: f.dias, tipo: f.tipo, situacoes: f.situacoes, responsavel: f.responsavel }); }}>Limpar filtros</button>
             )}
             <span className="espaco" />
@@ -449,7 +466,7 @@ function PainelPendentes() {
                         <td className="nowrap" title={`emitida em ${data(l.emissao)}`}><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong></td>
                         <td style={{ maxWidth: 170 }} title={l.produto ?? ''}>
                           <div className="truncar">{l.produto ?? <span className="muted">—</span>}</div>
-                          {l.responsavel === 'faturamento' && f.responsavel !== 'faturamento' && <span className="tag" style={{ marginTop: 2 }}>Faturamento</span>}
+                          <div className="muted pequeno" style={{ color: COR_CATEGORIA[l.categoria] }}>{dados.categorias?.[l.categoria]}</div>
                         </td>
                         <td style={{ maxWidth: 220 }}>
                           <div className="truncar" title={l.fornecedor ?? ''}>{l.fornecedor ?? <span className="muted">não cadastrado</span>}</div>

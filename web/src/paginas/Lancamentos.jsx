@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { useAuth } from '../contexto.jsx';
-import { brl, BotaoExportar, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
+import { brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
 // rótulo de dados em cima das colunas
@@ -49,6 +49,7 @@ const COLUNAS_NOTAS = [
   { titulo: 'Valor', tipo: 'moeda', valor: (l) => l.valor },
   { titulo: 'Situação', valor: (l) => l.situacao_rotulo },
   { titulo: 'Origem', valor: (l) => (l.com_xml ? 'XML recebido' : 'Digitada') },
+  { titulo: 'Tipo de nota', valor: (l) => l.categoria_rotulo },
   { titulo: 'Dias até lançar', tipo: 'numero', valor: (l) => l.dias_ate_lancar },
 ];
 /** Valor em reais abreviado para tabelas (o valor completo vai no title). */
@@ -77,7 +78,7 @@ function BarraMeta({ pct, titulo }) {
 }
 
 const CHAVE_RECOLHIDOS = 'lancamentos_blocos_recolhidos';
-const ROTULO_FILTRO = { equipe: 'Bloco', dia: 'Dia', hora: 'Hora', usuario: 'Pessoa', empresa: 'Empresa', origem: 'Origem' };
+const ROTULO_FILTRO = { categoria: 'Tipo de nota', equipe: 'Bloco', dia: 'Dia', hora: 'Hora', usuario: 'Pessoa', empresa: 'Empresa', origem: 'Origem' };
 
 /** Cor da célula do mapa de calor conforme a intensidade. */
 const corCalor = (v, max) => (v === 0 ? 'var(--superficie-2)' : `color-mix(in srgb, var(--serie-1) ${Math.max(12, Math.round((v / max) * 100))}%, var(--superficie))`);
@@ -92,7 +93,7 @@ export default function Lancamentos() {
     empresa: params.get('empresa') ?? '',
     // filtros em cascata (clique nos gráficos)
     dia: params.get('dia') ?? '', hora: params.get('hora') ?? '', origem: params.get('origem') ?? '',
-    equipe: params.get('equipe') ?? '',
+    equipe: params.get('equipe') ?? '', categoria: params.get('categoria') ?? '',
   };
   // "periodo" é o marcador de "sem mês"; o valor vazio some da URL e voltaria para o mês vigente
   const mes = f.mes === 'periodo' ? '' : f.mes;
@@ -107,12 +108,12 @@ export default function Lancamentos() {
   const setFiltro = (k, v) => setFiltros({ [k]: v });
   // clicar de novo no que já está filtrado tira o filtro
   const alternar = (k, v) => setFiltro(k, String(f[k]) === String(v) ? '' : v);
-  const ativos = ['equipe', 'dia', 'hora', 'usuario', 'empresa', 'origem'].filter((c) => f[c] !== '');
+  const ativos = ['categoria', 'equipe', 'dia', 'hora', 'usuario', 'empresa', 'origem'].filter((c) => f[c] !== '');
   const { permissoes } = useAuth();
   const podeMeta = permissoes.includes('administrar');
   const { dados, erro, carregando, recarregar, atualizar } = useDados(
-    ({ forcar } = {}) => api.get(`/lancamentos${qs({ forcar: forcar ? '1' : '', mes, dias: mes ? '' : f.dias, usuario: f.usuario, base: f.base, situacoes: f.situacoes, empresa: f.empresa, dia: f.dia, hora: f.hora, origem: f.origem, equipe: f.equipe })}`),
-    [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa, f.dia, f.hora, f.origem, f.equipe], { automatico: false, memoria: 'lancamentos' },
+    ({ forcar } = {}) => api.get(`/lancamentos${qs({ forcar: forcar ? '1' : '', mes, dias: mes ? '' : f.dias, usuario: f.usuario, base: f.base, situacoes: f.situacoes, empresa: f.empresa, dia: f.dia, hora: f.hora, origem: f.origem, equipe: f.equipe, categoria: f.categoria })}`),
+    [f.mes, f.dias, f.usuario, f.base, f.situacoes, f.empresa, f.dia, f.hora, f.origem, f.equipe, f.categoria], { automatico: false, memoria: 'lancamentos' },
   );
   const [horaDestaque, setHoraDestaque] = useState(null);
   const [mostrar, setMostrar] = useState(300);
@@ -201,10 +202,10 @@ export default function Lancamentos() {
           <strong className="muted">Filtrando por:</strong>
           {ativos.map((c) => (
             <button key={c} className="btn pequeno ghost" onClick={() => setFiltro(c, '')} title="Tirar este filtro">
-              {ROTULO_FILTRO[c]}: <strong>{c === 'dia' ? data(f.dia) : c === 'hora' ? `${String(f.hora).padStart(2, '0')}h` : c === 'origem' ? (f.origem === 'xml' ? 'XML recebido' : 'Digitada') : c === 'equipe' ? (f.equipe === 'fiscal' ? 'Escrita Fiscal' : 'Outros') : f[c]}</strong> ✕
+              {ROTULO_FILTRO[c]}: <strong>{c === 'dia' ? data(f.dia) : c === 'hora' ? `${String(f.hora).padStart(2, '0')}h` : c === 'origem' ? (f.origem === 'xml' ? 'XML recebido' : 'Digitada') : c === 'equipe' ? (f.equipe === 'fiscal' ? 'Escrita Fiscal' : 'Outros') : c === 'categoria' ? (dados?.por_categoria?.find((x) => x.chave === f.categoria)?.rotulo ?? f.categoria) : f[c]}</strong> ✕
             </button>
           ))}
-          <button className="btn pequeno" onClick={() => setFiltros({ equipe: '', dia: '', hora: '', usuario: '', empresa: '', origem: '' })}>Limpar filtros</button>
+          <button className="btn pequeno" onClick={() => setFiltros({ categoria: '', equipe: '', dia: '', hora: '', usuario: '', empresa: '', origem: '' })}>Limpar filtros</button>
           {carregando && <span className="muted">atualizando…</span>}
         </div>
       )}
@@ -396,6 +397,26 @@ export default function Lancamentos() {
             </Cartao>
 
             <div className="coluna">
+              <Cartao titulo="Lançadas por tipo de nota" sub="clique para filtrar" semPadding
+                acoes={<BotaoExportar titulo="Lançadas por tipo de nota" linhas={dados.por_categoria ?? []} rotulo="Excel"
+                  colunas={[{ titulo: 'Tipo de nota', valor: (x) => x.rotulo }, { titulo: 'Notas', tipo: 'numero', valor: (x) => x.notas }, { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor }]} />}>
+                <ResponsiveContainer width="100%" height={Math.max(120, (dados.por_categoria ?? []).length * 30 + 16)}>
+                  <BarChart data={dados.por_categoria ?? []} layout="vertical" margin={{ left: 8, right: 56, top: 8, bottom: 4 }}>
+                    <XAxis type="number" hide />
+                    <YAxis type="category" dataKey="rotulo" tick={eixo} axisLine={false} tickLine={false} width={130} />
+                    <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
+                      <div className="tooltip-grafico"><div className="t">{payload[0].payload.rotulo}</div>
+                        <div><strong>{numero(payload[0].payload.notas)}</strong> nota(s) · {brl(payload[0].payload.valor)}</div>
+                        <div className="muted pequeno">Clique para filtrar</div></div>
+                    ) : null)} />
+                    <Bar isAnimationActive={false} dataKey="notas" radius={[0, 4, 4, 0]} maxBarSize={18} style={{ cursor: 'pointer' }}
+                      onClick={(e) => alternar('categoria', (e.payload ?? e).chave)}>
+                      {(dados.por_categoria ?? []).map((x) => <Cell key={x.chave} fill={COR_CATEGORIA[x.chave] ?? 'var(--serie-1)'} fillOpacity={!f.categoria || f.categoria === x.chave ? 1 : 0.3} />)}
+                      <LabelList dataKey="notas" position="right" style={rotulo} formatter={(v) => numero(v)} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </Cartao>
               <Cartao titulo="Por empresa" sub="notas lançadas" semPadding>
                 <div style={{ padding: 12 }}>
                   {dados.por_empresa.map((x) => {

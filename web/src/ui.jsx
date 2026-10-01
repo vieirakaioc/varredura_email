@@ -29,6 +29,12 @@ export function cnpj(v) {
 }
 export const chaveFmt = (c) => (c && /^\d{44}$/.test(c) ? c.match(/.{1,4}/g).join(' ') : c || '—');
 
+// Cores fixas por tipo de nota (serviço, combustível...), as mesmas nas abas de pendentes e lançadas
+export const COR_CATEGORIA = {
+  combustivel: '#e8833a', servico: '#7a4fd0', frete: '#1c8c8c', energia_telecom: '#c2a100',
+  biomassa: '#6b8e23', produto: 'var(--serie-1)', sem_itens: 'var(--status-neutro)',
+};
+
 // ------------------------------------------------------------------ status
 export const STATUS = {
   APROVADA: { rotulo: 'Aprovada', curto: 'Aprovada', icone: '✓' },

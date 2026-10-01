@@ -6,6 +6,7 @@
 import { getConfig, setConfig } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { ateOMinuto, comCache } from './cache.js';
+import { CATEGORIAS, categoriaDe, colunasItem, sqlMarcasItem } from './categorias.js';
 
 // Situação da nota no Senior (E440NFC.SITNFC). Os relatórios do Senior costumam sair só com "Fechada".
 const SITUACOES = { 1: 'Em digitação', 2: 'Fechada', 3: 'Cancelada' };
@@ -105,8 +106,12 @@ export function salvarMetas({ parametros, escrita_fiscal: time, jornadas, pessoa
   return r;
 }
 
+// Tipo de nota: itens lançados de produto (E440IPC) e serviço (E440ISC); combustível e bagaço/madeira pelos
+// itens do XML recebido (E000IPC) ou pelo nome do fornecedor (posto)
 const SQL = `SELECT n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n.DATGER, n.HORGER, n.USUGER, n.VLRLIQ, n.SITNFC,
-    u.NOMUSU, fi.SIGFIL, fi.NOMFIL, fo.NOMFOR,
+    u.NOMUSU, fi.SIGFIL, fi.NOMFIL, fo.NOMFOR, n.CHVNEL,
+    CASE WHEN EXISTS (SELECT 1 FROM E440IPC ip1 WHERE ip1.CODEMP = n.CODEMP AND ip1.CODFIL = n.CODFIL AND ip1.CODFOR = n.CODFOR AND ip1.NUMNFC = n.NUMNFC AND ip1.CODSNF = n.CODSNF) THEN 1 ELSE 0 END AS TEM_PRODUTO,
+    CASE WHEN EXISTS (SELECT 1 FROM E440ISC is1 WHERE is1.CODEMP = n.CODEMP AND is1.CODFIL = n.CODFIL AND is1.CODFOR = n.CODFOR AND is1.NUMNFC = n.NUMNFC AND is1.CODSNF = n.CODSNF) THEN 1 ELSE 0 END AS TEM_SERVICO{marcas},
     CASE WHEN x.CHVNEL IS NULL THEN 0 ELSE 1 END AS COM_XML,
     CASE WHEN x.CHVNEL IS NULL THEN NULL ELSE DATEDIFF(day, x.DATENT, n.DATGER) END AS DIAS_ATE_LANCAR
   FROM E440NFC n
@@ -144,10 +149,12 @@ export async function painelLancamentos(filtros = {}) {
   const de = new Date(`${periodo.de}T00:00:00Z`);
   const ate = new Date(`${periodo.ate}T23:59:59Z`);
   // Pessoa, empresa e situação são filtrados abaixo, sobre estas linhas: cache de cinco minutos por período (renovado em segundo plano enquanto a tela é usada)
+  const cols = await colunasItem();
+  const sqlLancadas = SQL.replace('{marcas}', sqlMarcasItem(cols, 'n.CHVNEL', 'fo.NOMFOR'));
   const linhas = await comCache(
-    `lancamentos|${base}|${ateOMinuto(de)}|${ateOMinuto(ate)}`,
+    `lancamentos2|${base}|${ateOMinuto(de)}|${ateOMinuto(ate)}`,
     filtros.forcar === '1' ? 0 : 300_000,
-    () => consultar(SQL.replaceAll('{campoData}', campoData), de, { ate }),
+    () => consultar(sqlLancadas.replaceAll('{campoData}', campoData), de, { ate }),
   );
 
   let itens = linhas.map((l) => ({
@@ -163,6 +170,8 @@ export async function painelLancamentos(filtros = {}) {
     usuario: String(l.NOMUSU ?? '').trim() || `Usuário ${l.USUGER}`,
     valor: l.VLRLIQ != null ? Number(l.VLRLIQ) : null,
     com_xml: l.COM_XML === 1,
+    categoria: categoriaDe({ chave: l.CHVNEL, especie: l.CODSNF, biomassa: Number(l.BIOMASSA) === 1, combustivel: Number(l.COMBUSTIVEL) === 1, temProduto: Number(l.TEM_PRODUTO) === 1, temServico: Number(l.TEM_SERVICO) === 1 }),
+    get categoria_rotulo() { return CATEGORIAS[this.categoria] ?? this.categoria; },
     dias_ate_lancar: l.DIAS_ATE_LANCAR != null ? Math.max(0, Number(l.DIAS_ATE_LANCAR)) : null,
   }));
   // Filtros em cascata: cada clique num gráfico vira um filtro (dia, hora, pessoa, empresa, origem, situação).
@@ -188,6 +197,7 @@ export async function painelLancamentos(filtros = {}) {
     dia: (i) => !filtros.dia || i.dia === filtros.dia,
     hora: (i) => filtroHora == null || i.hora === filtroHora,
     origem: (i) => !filtros.origem || (filtros.origem === 'xml' ? i.com_xml : !i.com_xml),
+    categoria: (i) => !filtros.categoria || i.categoria === filtros.categoria,
   };
   const todos = itens;
   const semFiltro = (...exceto) => todos.filter((i) => Object.entries(testes).every(([k, t]) => exceto.includes(k) || t(i)));
@@ -262,6 +272,12 @@ export async function painelLancamentos(filtros = {}) {
   }, new Map()).values()].sort((a, b) => b.notas - a.notas);
 
   const paraOrigem = semFiltro('origem');
+  // Lançadas por tipo de nota (ignora o próprio filtro, para o gráfico mostrar todos os tipos)
+  const paraCategoria = semFiltro('categoria');
+  const porCategoria = Object.entries(CATEGORIAS).map(([chave, rotulo]) => {
+    const lista = paraCategoria.filter((i) => i.categoria === chave);
+    return { chave, rotulo, notas: lista.length, valor: soma(lista, (i) => i.valor) };
+  }).filter((c) => c.notas > 0).sort((a, b) => b.notas - a.notas);
   const porOrigem = [
     { chave: 'xml', rotulo: 'A partir do XML recebido', notas: paraOrigem.filter((i) => i.com_xml).length },
     { chave: 'manual', rotulo: 'Digitada (sem XML na base)', notas: paraOrigem.filter((i) => !i.com_xml).length },
@@ -296,7 +312,7 @@ export async function painelLancamentos(filtros = {}) {
   return {
     periodo, base, situacoes: escolhidas.join(','), situacoes_disponiveis: SITUACOES,
     empresa: filtros.empresa ?? '',
-    filtros_ativos: { equipe: filtros.equipe || null, usuario: filtros.usuario || null, empresa: filtros.empresa || null, dia: filtros.dia || null, hora: filtroHora, origem: filtros.origem || null },
+    filtros_ativos: { categoria: filtros.categoria || null, equipe: filtros.equipe || null, usuario: filtros.usuario || null, empresa: filtros.empresa || null, dia: filtros.dia || null, hora: filtroHora, origem: filtros.origem || null },
     metas: {
       padrao: metas.padrao, calculo: metas.calculo, parametros: metas.parametros, minutos_jornada: metas.minutos_jornada,
       escrita_fiscal: metas.escrita_fiscal, jornadas: metas.jornadas, pessoas: metas.pessoas,
@@ -320,7 +336,7 @@ export async function painelLancamentos(filtros = {}) {
       media_pessoa_dia: pessoaDias ? Math.round((itens.length / pessoaDias) * 10) / 10 : null,
       total_periodo: todos.length,
     },
-    por_dia: porDia, por_hora: porHora, pessoas, mapa_calor: mapaCalor, por_empresa: porEmpresa.slice(0, 12), por_origem: porOrigem,
+    por_dia: porDia, por_hora: porHora, pessoas, mapa_calor: mapaCalor, por_empresa: porEmpresa.slice(0, 12), por_origem: porOrigem, por_categoria: porCategoria,
     por_situacao: porSituacao,
     // Lista das notas lançadas (com os filtros em cascata), mais recentes primeiro
     itens: itens.sort((a, b) => String(b.geracao).localeCompare(String(a.geracao)) || ((b.hora ?? 0) * 60 + (b.minuto ?? 0)) - ((a.hora ?? 0) * 60 + (a.minuto ?? 0)))
