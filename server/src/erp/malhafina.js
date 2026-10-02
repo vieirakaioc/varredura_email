@@ -8,7 +8,7 @@
 // Só dígitos nos dois lados — a planilha vem com máscara e o Senior, sem.
 import ExcelJS from 'exceljs';
 import crypto from 'node:crypto';
-import { all, get, insert, run, tx } from '../db/index.js';
+import { all, get, getConfig, insert, run, setConfig, tx } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { comCache, versaoSql } from './cache.js';
 
@@ -293,6 +293,52 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
   return { conferidas: notas.length, periodo, resumo, entradas_lidas: linhas.length };
 }
 
+// ------------------------------------------------------------------ prestadores PJ
+// "PJ" aqui é o prestador de serviço continuado da própria empresa (consultoria, assessoria,
+// serviço de escritório). A nota dele existe e é legítima, mas não é compra a lançar pela escrita
+// fiscal — então sai da malha fina por padrão, sem deixar de ficar guardada.
+const PJ_INICIAIS = [
+  ['60007793000100', '60.007.793 DIHENES DE OLIVEIRA LOPES'], ['60471079000160', '60.471.079 ANDRE PEREIRA DA SILVA'],
+  ['61014018000137', '61.014.018 DIEGO BARROS DOS SANTOS'], ['65496279000191', '65.496.279 PAULO HENRIQUE DE LIMA JUNIOR'],
+  ['54034511000153', 'APEXFINANCAS LTDA'], ['65385362000193', 'AZ SOLUTIONS LTDA'],
+  ['51237084000112', 'BRUNO PAIVA PEREIRA LTDA'], ['68952735000159', 'CESAR AUGUSTO PEREIRA BONIFACIO'],
+  ['59518434000120', 'D. DE FREITAS RIBEIRO NETO'], ['59202453000143', 'EDSON JS JUNIOR'],
+  ['56299391000141', 'J A FAGUNDES'], ['43400889000107', 'J. J. ALVES LTDA.'],
+  ['47732569000105', 'JOSUE ALVES DA SILVA 00912309180'], ['58011970000172', 'LUIS FERNANDO FARDIN DE MARQUE MANUTENCOES'],
+  ['61851576000157', 'MEH SERVICOS ADMINISTRATIVOS LTDA'], ['68540725000106', 'METRICA CONSULTORIA LTDA'],
+  ['61317085000120', 'MUNIZ ASSESSORIA E CONSULTORIA LTDA'], ['30411890000195', 'PATRICIA SILVEIRA GONZAGA 58751386100'],
+  ['52605988000116', 'PECUS CONTABILIDADE E ASSESSORIA EMPRESARIAL LTDA'], ['58971196000141', 'PROJETOS COM PROPOSITO CONSULTORIA LTDA'],
+  ['53609815000139', 'R. M. ROMBI'], ['68130320000108', 'ROGER LUIZ DA SILVA ALMEIDA FILHO'],
+  ['49439311000140', 'STAR SERVICOS DE ESCRITORIO LTDA'], ['20867409000117', 'V. I. A. PRESTACAO DE SERVICOS, TRANSPORTE E LOCACAO LTDA'],
+];
+
+/** Lista os PJ. Na primeira vez, semeia a lista que já era usada no Power Query. */
+export function listarPj() {
+  if (!getConfig('malha_fina_pj_iniciais')) {
+    tx(() => {
+      for (const [cnpj, nome] of PJ_INICIAIS) {
+        run('INSERT OR IGNORE INTO prestadores_pj (cnpj, nome, observacao) VALUES (?, ?, ?)', [cnpj, nome, 'lista inicial']);
+      }
+      setConfig('malha_fina_pj_iniciais', '1');
+    });
+  }
+  return all('SELECT p.*, u.nome AS usuario FROM prestadores_pj p LEFT JOIN usuarios u ON u.id = p.usuario_id ORDER BY p.nome');
+}
+
+export function salvarPj({ cnpj, nome, observacao }, usuarioId) {
+  const doc = documento(cnpj);
+  if (!doc) throw new Error('Informe o CNPJ/CPF do prestador');
+  run(`INSERT INTO prestadores_pj (cnpj, nome, observacao, usuario_id) VALUES (?, ?, ?, ?)
+       ON CONFLICT(cnpj) DO UPDATE SET nome = excluded.nome, observacao = excluded.observacao, usuario_id = excluded.usuario_id`,
+  [doc, nome ?? null, observacao ?? null, usuarioId ?? null]);
+  return { cnpj: doc, nome };
+}
+
+export function removerPj(cnpj) {
+  run('DELETE FROM prestadores_pj WHERE cnpj = ?', [documento(cnpj)]);
+  return { ok: true };
+}
+
 /** Lotes importados, com o placar de cada um. */
 export function listarLotes() {
   return all(`SELECT l.*, u.nome AS usuario,
@@ -313,6 +359,11 @@ export function painelLote(loteId, filtros = {}) {
   const lote = get('SELECT * FROM malha_fina_lotes WHERE id = ?', [loteId]);
   if (!lote) throw new Error('Lote não encontrado');
   let notas = all('SELECT * FROM malha_fina_notas WHERE lote_id = ? ORDER BY competencia, prestador, numero', [loteId]);
+  // PJ saem da conta por padrão (filtros.com_pj = '1' traz de volta). O total continua guardado.
+  const pj = new Set(listarPj().map((p) => p.cnpj));
+  const notasPj = notas.filter((n) => pj.has(n.cnpj_prestador));
+  const comPj = filtros.com_pj === '1';
+  if (!comPj) notas = notas.filter((n) => !pj.has(n.cnpj_prestador));
   const porSituacao = Object.keys(SITUACOES).map((chave) => ({
     chave, rotulo: SITUACOES[chave],
     qtd: notas.filter((n) => n.situacao === chave).length,
@@ -344,6 +395,11 @@ export function painelLote(loteId, filtros = {}) {
   const total = notas.length;
   return {
     lote: { ...lote, situacoes: SITUACOES },
+    pj: {
+      cadastrados: pj.size, ocultos: comPj ? 0 : notasPj.length, com_pj: comPj,
+      nao_lancadas: notasPj.filter((n) => n.situacao === 'nao_lancada').length,
+      valor: Math.round(notasPj.filter((n) => n.situacao === 'nao_lancada').reduce((t, n) => t + (n.valor ?? 0), 0) * 100) / 100,
+    },
     indicadores: {
       notas: lote.notas,
       nao_lancadas: notas.filter((n) => n.situacao === 'nao_lancada').length,

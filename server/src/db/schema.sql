@@ -519,3 +519,13 @@ CREATE TABLE IF NOT EXISTS malha_fina_notas (
   UNIQUE (lote_id, cnpj_prestador, numero, codigo_verificador)
 );
 CREATE INDEX IF NOT EXISTS ix_malha_notas_lote ON malha_fina_notas(lote_id, situacao);
+
+-- Prestadores tratados como PJ (prestador de serviço continuado da própria empresa).
+-- Ficam de fora da malha fina por padrão: não são nota de compra a lançar pela escrita fiscal.
+CREATE TABLE IF NOT EXISTS prestadores_pj (
+  cnpj TEXT PRIMARY KEY,
+  nome TEXT,
+  observacao TEXT,
+  usuario_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);

@@ -88,6 +88,23 @@ rotasErpAdmin.get('/malha-fina', permitir('ver'), async (req, res) => {
   const { listarLotes } = await import('../erp/malhafina.js');
   res.json({ lotes: listarLotes() });
 });
+rotasErpAdmin.get('/malha-fina/pj', permitir('ver'), async (req, res) => {
+  const { listarPj } = await import('../erp/malhafina.js');
+  res.json({ pj: listarPj() });
+});
+rotasErpAdmin.post('/malha-fina/pj', permitir('decidir'), async (req, res) => {
+  const { salvarPj } = await import('../erp/malhafina.js');
+  try {
+    const r = salvarPj(req.body ?? {}, req.usuario.id);
+    auditar(req.usuario.id, 'malha_fina.pj_incluir', 'prestador', r.cnpj, { nome: r.nome }, req.ip);
+    res.json(r);
+  } catch (e) { res.status(400).json({ erro: e.message }); }
+});
+rotasErpAdmin.delete('/malha-fina/pj/:cnpj', permitir('decidir'), async (req, res) => {
+  const { removerPj } = await import('../erp/malhafina.js');
+  auditar(req.usuario.id, 'malha_fina.pj_remover', 'prestador', req.params.cnpj, {}, req.ip);
+  res.json(removerPj(req.params.cnpj));
+});
 rotasErpAdmin.get('/malha-fina/:id', permitir('ver'), async (req, res) => {
   const { painelLote } = await import('../erp/malhafina.js');
   try { res.json(painelLote(Number(req.params.id), req.query)); } catch (e) { res.status(404).json({ erro: e.message }); }

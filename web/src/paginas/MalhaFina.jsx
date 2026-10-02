@@ -39,7 +39,9 @@ export default function MalhaFina() {
   const f = {
     lote: params.get('lote') ?? '', situacao: params.get('situacao') ?? '',
     busca: params.get('busca') ?? '', empresa: params.get('empresa') ?? '',
+    com_pj: params.get('com_pj') ?? '',
   };
+  const [vendoPj, setVendoPj] = useState(false);
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ aba: 'malha', ...f, [k]: v }).filter(([, x]) => x)));
   const avisar = useToast();
   const [enviando, setEnviando] = useState(false);
@@ -48,10 +50,11 @@ export default function MalhaFina() {
   const campoArquivo = useRef(null);
 
   const lotes = useDados(() => api.get('/malha-fina'), [], { automatico: false });
+  const listaPj = useDados(() => api.get('/malha-fina/pj'), [], { automatico: false });
   const loteId = f.lote || lotes.dados?.lotes?.[0]?.id || '';
   const painel = useDados(
-    () => (loteId ? api.get(`/malha-fina/${loteId}${qs({ situacao: f.situacao, busca: f.busca, empresa: f.empresa })}`) : Promise.resolve(null)),
-    [loteId, f.situacao, f.busca, f.empresa], { automatico: false },
+    () => (loteId ? api.get(`/malha-fina/${loteId}${qs({ situacao: f.situacao, busca: f.busca, empresa: f.empresa, com_pj: f.com_pj })}`) : Promise.resolve(null)),
+    [loteId, f.situacao, f.busca, f.empresa, f.com_pj], { automatico: false },
   );
 
   const enviar = async (arquivo) => {
@@ -80,6 +83,17 @@ export default function MalhaFina() {
       avisar(`Conferência refeita: ${numero(r.resumo?.nao_lancada ?? 0)} não lançada(s) de ${numero(r.conferidas)}`, 'ok');
       painel.recarregar(); lotes.recarregar();
     } catch (e) { avisar(e.message, 'erro'); } finally { setConferindo(false); }
+  };
+
+  const marcarPj = async (nota) => {
+    await api.post('/malha-fina/pj', { cnpj: nota.cnpj_prestador, nome: nota.prestador });
+    avisar(`${nota.prestador} entrou na lista de PJ e saiu da conferência`, 'ok');
+    painel.recarregar(); listaPj.recarregar();
+  };
+  const tirarPj = async (cnpj, nome) => {
+    await api.del(`/malha-fina/pj/${cnpj}`);
+    avisar(`${nome ?? cnpj} voltou para a conferência`, 'ok');
+    painel.recarregar(); listaPj.recarregar();
   };
 
   const apagar = async (id) => {
@@ -156,6 +170,38 @@ export default function MalhaFina() {
                 cor={CORES[s.chave]?.cor} onClick={() => setFiltro('situacao', f.situacao === s.chave ? '' : s.chave)} />
             ))}
           </div>
+
+          <Cartao>
+            <div className="linha" style={{ gap: 10, flexWrap: 'wrap' }}>
+              <label className="linha" style={{ gap: 6 }} title="PJ = prestador de serviço continuado da empresa; a nota existe, mas não é compra a lançar pela escrita fiscal">
+                <input type="checkbox" checked={!d.pj.com_pj} onChange={() => setFiltro('com_pj', d.pj.com_pj ? '' : '1')} />
+                <strong>Tirar os PJ da conferência</strong>
+              </label>
+              <span className="muted pequeno">
+                {d.pj.cadastrados} prestador(es) na lista
+                {d.pj.com_pj
+                  ? ' · sendo mostrados'
+                  : d.pj.ocultos
+                    ? ` · ${numero(d.pj.ocultos)} nota(s) fora da conta${d.pj.nao_lancadas ? `, ${numero(d.pj.nao_lancadas)} delas não lançadas (${brl(d.pj.valor)})` : ''}`
+                    : ' · nenhuma nota deles nesta planilha'}
+              </span>
+              <span className="espaco" />
+              <button className="btn pequeno ghost" onClick={() => setVendoPj((x) => !x)}>
+                {vendoPj ? 'Fechar a lista' : 'Ver/editar a lista de PJ'}
+              </button>
+            </div>
+            {vendoPj && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '4px 12px', marginTop: 10 }}>
+                {(listaPj.dados?.pj ?? []).map((p) => (
+                  <div key={p.cnpj} className="linha entre pequeno" style={{ gap: 6 }}>
+                    <span className="truncar" title={fmtCnpj(p.cnpj)}>{p.nome ?? fmtCnpj(p.cnpj)}</span>
+                    <button className="btn pequeno ghost" title="Tirar da lista e voltar a conferir" onClick={() => tirarPj(p.cnpj, p.nome)}>✕</button>
+                  </div>
+                ))}
+                {!listaPj.dados?.pj?.length && <span className="muted pequeno">Nenhum PJ cadastrado.</span>}
+              </div>
+            )}
+          </Cartao>
 
           {Boolean(d.por_empresa.filter((x) => x.nao_lancadas).length) && (
             <Cartao titulo="Empresas com notas não lançadas" sub="clique para filtrar" semPadding>
@@ -240,7 +286,12 @@ export default function MalhaFina() {
                             : <span className="muted" title={n.empresa ?? ''}>sem entrada no Senior</span>}
                         </td>
                         <td>
-                          <div className="truncar" style={{ maxWidth: 260 }}>{n.prestador ?? '—'}</div>
+                          <div className="linha" style={{ gap: 6 }}>
+                            <span className="truncar" style={{ maxWidth: 240 }}>{n.prestador ?? '—'}</span>
+                            <button className="btn pequeno ghost" style={{ padding: '0 6px', lineHeight: 1.6 }}
+                              title={`Marcar ${n.prestador ?? 'este prestador'} como PJ e tirar da conferência`}
+                              onClick={() => marcarPj(n)}>+PJ</button>
+                          </div>
                           <div className="muted pequeno">{fmtCnpj(n.cnpj_prestador)}{n.municipio_prestador ? ` · ${n.municipio_prestador}` : ''}</div>
                         </td>
                         <td>{n.numero}<div className="muted pequeno">linha {n.linha}</div></td>
