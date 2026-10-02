@@ -40,6 +40,10 @@ const COLUNAS = {
   valor_liquido: ['valor liquido'],
 };
 
+// Retenções informadas pela contabilidade. Somadas, explicam a diferença para o líquido do Senior.
+const COLUNAS_RETENCAO = ['iss dentro do municipio', 'iss fora do municipio', 'valor csrf', 'valor pis',
+  'valor cofins', 'valor csll', 'valor irrf', 'valor inss'];
+
 const semAcento = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 const digitos = (s) => String(s ?? '').replace(/\D/g, '');
 const texto = (v) => {
@@ -63,6 +67,49 @@ const dia = (v) => {
   return /^\d{4}-\d{2}-\d{2}/.test(t ?? '') ? t.slice(0, 10) : null;
 };
 
+// ------------------------------------------------------------------ retenção: por que o Senior é menor
+// A planilha da contabilidade traz o valor BRUTO da NFS-e; o Senior guarda o LÍQUIDO, já com o que foi
+// retido na fonte. A diferença só é aceitável quando bate com uma alíquota de retenção de verdade —
+// e é isso que separa "retivemos imposto" de "lançaram o valor errado".
+const ISS = [0, 2, 2.5, 3, 3.5, 4, 5];
+const COMBINACOES = (() => {
+  const lista = [];
+  for (const iss of ISS) {
+    for (const irrf of [0, 1.5]) {
+      for (const csrf of [0, 4.65]) {
+        for (const inss of [0, 11]) {
+          const pct = Math.round((iss + irrf + csrf + inss) * 100) / 100;
+          const partes = [iss && `ISS ${String(iss).replace('.', ',')}%`, irrf && 'IRRF 1,5%',
+            csrf && 'CSRF 4,65%', inss && 'INSS 11%'].filter(Boolean);
+          lista.push({ pct, nome: partes.join(' + ') || 'sem retenção' });
+        }
+      }
+    }
+  }
+  // Mesma alíquota por caminhos diferentes: fica a explicação mais simples
+  return [...lista.reduce((m, c) => (m.has(c.pct) && m.get(c.pct).nome.length <= c.nome.length ? m : m.set(c.pct, c)), new Map()).values()]
+    .sort((a, b) => a.pct - b.pct);
+})();
+
+/**
+ * Explica a diferença entre o bruto da planilha e o líquido do Senior.
+ * Devolve null quando nenhuma alíquota de retenção justifica — aí é divergência de verdade.
+ */
+export function explicarDiferenca(bruto, liquido, retencoesInformadas = 0) {
+  if (bruto == null || liquido == null || bruto <= 0) return null;
+  const dif = Math.round((bruto - liquido) * 100) / 100;
+  if (dif < -0.01) return null;                       // Senior maior que a nota: nunca é retenção
+  if (Math.abs(dif) <= 0.01) return { pct: 0, nome: 'sem retenção', valor: 0 };
+  // Folga para centavos: 5 centavos ou 0,05% do bruto, o que for maior
+  const folga = Math.max(0.05, bruto * 0.0005);
+  if (retencoesInformadas > 0 && Math.abs(dif - retencoesInformadas) <= folga) {
+    return { pct: Math.round((dif / bruto) * 10000) / 100, nome: 'retenção informada na planilha', valor: dif };
+  }
+  const pct = (dif / bruto) * 100;
+  const achada = COMBINACOES.find((c) => c.pct > 0 && Math.abs((bruto * c.pct) / 100 - dif) <= folga);
+  return achada ? { pct: Math.round(pct * 100) / 100, nome: achada.nome, valor: dif } : null;
+}
+
 /** Localiza cada coluna pelo cabeçalho; devolve { campo: índice da coluna }. */
 function mapearColunas(linhaCabecalho) {
   const titulos = [];
@@ -72,6 +119,7 @@ function mapearColunas(linhaCabecalho) {
     const n = titulos.findIndex((t) => t && nomes.includes(t));
     if (n > 0) mapa[campo] = n;
   }
+  mapa._retencoes = titulos.map((t, n) => (t && COLUNAS_RETENCAO.includes(t) ? n : 0)).filter(Boolean);
   return mapa;
 }
 
@@ -112,6 +160,7 @@ export async function lerPlanilha(buffer) {
       municipio_prestador: texto(celula(linha, 'municipio_prestador')),
       valor: numero(celula(linha, 'valor')),
       valor_liquido: numero(celula(linha, 'valor_liquido')),
+      retencoes_planilha: Math.round(mapa._retencoes.reduce((t, c) => t + (numero(linha.getCell(c).value) ?? 0), 0) * 100) / 100,
       linha: n,
     });
   }
@@ -209,21 +258,20 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
 
       let situacao;
       let diferenca = null;
+      let retencao = null;
       if (!achada) situacao = nota.cancelada_na_prefeitura ? 'cancelada_prefeitura' : 'nao_lancada';
       else if (String(achada.SITNFC).trim() === '3') situacao = 'cancelada_senior';
       else {
-        // O Senior guarda o líquido (já com ISS/IRRF/INSS/CSRF retidos) e a planilha traz o bruto,
-        // então o normal é o Senior ser MENOR. Só é divergência quando ele é maior, ou quando a
-        // diferença passa do teto plausível de retenção (ISS 5 + IRRF 1,5 + CSRF 4,65 + INSS 11 ≈ 22%).
         const esperado = nota.valor ?? nota.valor_liquido;
         const lancado = achada.VLRLIQ != null ? Number(achada.VLRLIQ) : null;
         diferenca = esperado != null && lancado != null ? Math.round((esperado - lancado) * 100) / 100 : null;
-        const foraDaFaixa = diferenca != null && esperado > 0 && (diferenca < -0.01 || diferenca / esperado > 0.25);
-        situacao = foraDaFaixa ? 'valor_divergente' : 'lancada';
+        const explicacao = explicarDiferenca(esperado, lancado, nota.retencoes_planilha ?? 0);
+        retencao = explicacao?.valor ? `${explicacao.nome} (${String(explicacao.pct).replace('.', ',')}%)` : null;
+        situacao = diferenca == null || explicacao ? 'lancada' : 'valor_divergente';
       }
       resumo[situacao] = (resumo[situacao] ?? 0) + 1;
       run(`UPDATE malha_fina_notas SET situacao = ?, entrada_numero = ?, entrada_empresa = ?, entrada_data = ?,
-             entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?, diferenca_valor = ?, conferido_em = ? WHERE id = ?`,
+             entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?, diferenca_valor = ?, retencao = ?, conferido_em = ? WHERE id = ?`,
       [situacao,
         achada ? String(achada.NUMNFC) : null,
         achada ? (String(achada.SIGFIL ?? '').trim() || String(achada.NOMFIL ?? '').trim() || `${achada.CODEMP}/${achada.CODFIL}`) : null,
@@ -231,7 +279,7 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
         achada ? iso(achada.DATGER) : null,
         achada?.VLRLIQ != null ? Number(achada.VLRLIQ) : null,
         achada ? String(achada.NOMUSU ?? '').trim() || null : null,
-        diferenca, agora, nota.id]);
+        diferenca, retencao, agora, nota.id]);
     }
     run('UPDATE malha_fina_lotes SET conferido_em = ? WHERE id = ?', [agora, loteId]);
   });

@@ -34,6 +34,8 @@ garantirColuna('documentos', 'senior_ocs', 'TEXT');     // JSON: OCs do Senior (
 garantirColuna('dfe_controle', 'ultimo_aviso', 'TEXT'); // 656 da SEFAZ (janela de 1 hora), separado dos erros
 // Malha fina: diferença entre o bruto da planilha e o líquido do Senior (normalmente a retenção)
 garantirColuna('malha_fina_notas', 'diferenca_valor', 'REAL');
+garantirColuna('malha_fina_notas', 'retencao', 'TEXT');              // alíquota que explica a diferença
+garantirColuna('malha_fina_notas', 'retencoes_planilha', 'REAL');    // soma das retenções que a contabilidade informou
 
 const cache = new Map();
 function stmt(sql) {

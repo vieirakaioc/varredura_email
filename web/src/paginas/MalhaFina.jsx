@@ -28,7 +28,9 @@ const COLUNAS_EXPORTAR = [
   { titulo: 'Lançada em', tipo: 'data', valor: (n) => n.entrada_lancada_em },
   { titulo: 'Quem lançou', valor: (n) => n.entrada_usuario },
   { titulo: 'Valor no Senior', tipo: 'moeda', valor: (n) => n.entrada_valor },
-  { titulo: 'Diferença (retenção)', tipo: 'moeda', valor: (n) => n.diferenca_valor },
+  { titulo: 'Diferença', tipo: 'moeda', valor: (n) => n.diferenca_valor },
+  { titulo: 'Explicação da diferença', valor: (n) => n.retencao },
+  { titulo: 'Retenções na planilha', tipo: 'moeda', valor: (n) => n.retencoes_planilha },
   { titulo: 'Linha na planilha', tipo: 'numero', valor: (n) => n.linha },
 ];
 
@@ -212,7 +214,11 @@ export default function MalhaFina() {
                         </td>
                         <td className="num">
                           {n.entrada_valor != null ? brl(n.entrada_valor) : '—'}
-                          {n.diferenca_valor ? <div className="muted pequeno">retenção {brl(n.diferenca_valor)}</div> : null}
+                          {n.diferenca_valor
+                            ? <div className="muted pequeno" title={n.retencao ? 'Diferença explicada por retenção na fonte' : 'Nenhuma alíquota de retenção explica esta diferença'}>
+                              −{brl(n.diferenca_valor)} · {n.retencao ?? 'sem explicação'}
+                            </div>
+                            : null}
                         </td>
                       </tr>
                     );
@@ -229,8 +235,10 @@ export default function MalhaFina() {
           <p className="muted pequeno">
             Como a conferência é feita: cada linha da planilha é procurada nas notas de entrada do Senior pelo
             <strong> CNPJ do prestador + número da nota</strong>, preferindo a entrada da mesma empresa tomadora. O Senior guarda o
-            valor líquido (já com ISS, IRRF, INSS e CSRF retidos) e a planilha traz o bruto, então a diferença dentro do teto de
-            retenção aparece como “retenção”, e não como divergência.
+            valor líquido (já com ISS, IRRF, INSS e CSRF retidos) e a planilha traz o bruto. A diferença só é aceita quando bate
+            com uma alíquota de retenção de verdade — IRRF 1,5%, CSRF 4,65%, ISS, INSS 11% e suas somas, com folga de centavos.
+            O que nenhuma alíquota explica fica marcado como <strong>valor não bate</strong>, porque aí não é retenção: é lançamento
+            com valor diferente do documento.
           </p>
         </>
       )}

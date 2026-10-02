@@ -510,6 +510,8 @@ CREATE TABLE IF NOT EXISTS malha_fina_notas (
   entrada_lancada_em TEXT,
   entrada_valor REAL,
   diferenca_valor REAL,              -- planilha (bruto) - Senior (líquido): normalmente é a retenção
+  retencao TEXT,                     -- alíquota que explica a diferença (ex.: "CSRF 4,65%")
+  retencoes_planilha REAL,           -- soma das retenções informadas pela contabilidade
   entrada_usuario TEXT,
   conferido_em TEXT,
   linha INTEGER,                     -- linha na planilha original
