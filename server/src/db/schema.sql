@@ -506,6 +506,7 @@ CREATE TABLE IF NOT EXISTS malha_fina_notas (
   situacao TEXT NOT NULL DEFAULT 'nao_conferida',  -- lancada | nao_lancada | cancelada_senior | valor_divergente | cancelada_prefeitura
   entrada_numero TEXT,
   entrada_empresa TEXT,
+  entrada_empresa_chave TEXT,        -- codemp/codfil da filial que lançou
   entrada_data TEXT,
   entrada_lancada_em TEXT,
   entrada_valor REAL,

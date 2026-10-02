@@ -277,7 +277,8 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
       }
       resumo[situacao] = (resumo[situacao] ?? 0) + 1;
       run(`UPDATE malha_fina_notas SET situacao = ?, entrada_numero = ?, entrada_empresa = ?, entrada_data = ?,
-             entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?, diferenca_valor = ?, retencao = ?, conferido_em = ? WHERE id = ?`,
+             entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?, diferenca_valor = ?, retencao = ?,
+             entrada_empresa_chave = ?, conferido_em = ? WHERE id = ?`,
       [situacao,
         achada ? String(achada.NUMNFC) : null,
         achada ? (String(achada.SIGFIL ?? '').trim() || String(achada.NOMFIL ?? '').trim() || `${achada.CODEMP}/${achada.CODFIL}`) : null,
@@ -285,7 +286,7 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
         achada ? iso(achada.DATGER) : null,
         achada?.VLRLIQ != null ? Number(achada.VLRLIQ) : null,
         achada ? String(achada.NOMUSU ?? '').trim() || null : null,
-        diferenca, retencao, agora, nota.id]);
+        diferenca, retencao, achada ? `${achada.CODEMP}/${achada.CODFIL}` : null, agora, nota.id]);
     }
     run('UPDATE malha_fina_lotes SET conferido_em = ? WHERE id = ?', [agora, loteId]);
   });
@@ -323,6 +324,16 @@ export function painelLote(loteId, filtros = {}) {
     return m.set(n.cnpj_prestador, a);
   }, new Map()).values()].sort((a, b) => b.qtd - a.qtd).slice(0, 10);
 
+  // Empresa do grupo que lançou (ou deveria ter lançado) a nota
+  const porEmpresa = [...notas.reduce((m, n) => {
+    const chave = n.entrada_empresa_chave ?? '—';
+    const a = m.get(chave) ?? { chave, rotulo: n.entrada_empresa ?? 'Sem entrada no Senior', qtd: 0, nao_lancadas: 0, valor: 0 };
+    a.qtd += 1;
+    if (n.situacao === 'nao_lancada') { a.nao_lancadas += 1; a.valor += n.valor ?? 0; }
+    return m.set(chave, a);
+  }, new Map()).values()].sort((a, b) => b.nao_lancadas - a.nao_lancadas || b.qtd - a.qtd);
+
+  if (filtros.empresa) notas = notas.filter((n) => (n.entrada_empresa_chave ?? '—') === filtros.empresa);
   if (filtros.situacao) notas = notas.filter((n) => n.situacao === filtros.situacao);
   if (filtros.busca) {
     const b = String(filtros.busca).toLowerCase();
@@ -338,7 +349,7 @@ export function painelLote(loteId, filtros = {}) {
       nao_lancadas: notas.filter((n) => n.situacao === 'nao_lancada').length,
       valor_nao_lancado: Math.round(notas.filter((n) => n.situacao === 'nao_lancada').reduce((s, n) => s + (n.valor ?? 0), 0) * 100) / 100,
     },
-    por_situacao: porSituacao, por_prestador: porPrestador,
+    por_situacao: porSituacao, por_prestador: porPrestador, por_empresa: porEmpresa,
     total, notas: notas.slice(0, 3000),
   };
 }

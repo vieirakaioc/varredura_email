@@ -36,7 +36,10 @@ const COLUNAS_EXPORTAR = [
 
 export default function MalhaFina() {
   const [params, setParams] = useSearchParams();
-  const f = { lote: params.get('lote') ?? '', situacao: params.get('situacao') ?? '', busca: params.get('busca') ?? '' };
+  const f = {
+    lote: params.get('lote') ?? '', situacao: params.get('situacao') ?? '',
+    busca: params.get('busca') ?? '', empresa: params.get('empresa') ?? '',
+  };
   const setFiltro = (k, v) => setParams(Object.fromEntries(Object.entries({ aba: 'malha', ...f, [k]: v }).filter(([, x]) => x)));
   const avisar = useToast();
   const [enviando, setEnviando] = useState(false);
@@ -47,8 +50,8 @@ export default function MalhaFina() {
   const lotes = useDados(() => api.get('/malha-fina'), [], { automatico: false });
   const loteId = f.lote || lotes.dados?.lotes?.[0]?.id || '';
   const painel = useDados(
-    () => (loteId ? api.get(`/malha-fina/${loteId}${qs({ situacao: f.situacao, busca: f.busca })}`) : Promise.resolve(null)),
-    [loteId, f.situacao, f.busca], { automatico: false },
+    () => (loteId ? api.get(`/malha-fina/${loteId}${qs({ situacao: f.situacao, busca: f.busca, empresa: f.empresa })}`) : Promise.resolve(null)),
+    [loteId, f.situacao, f.busca, f.empresa], { automatico: false },
   );
 
   const enviar = async (arquivo) => {
@@ -154,6 +157,29 @@ export default function MalhaFina() {
             ))}
           </div>
 
+          {Boolean(d.por_empresa.filter((x) => x.nao_lancadas).length) && (
+            <Cartao titulo="Empresas com notas não lançadas" sub="clique para filtrar" semPadding>
+              <div style={{ padding: 12 }}>
+                {d.por_empresa.filter((x) => x.nao_lancadas).map((x) => {
+                  const max = Math.max(...d.por_empresa.map((y) => y.nao_lancadas), 1);
+                  const ativo = f.empresa === x.chave;
+                  return (
+                    <button key={x.chave} className="linha entre" onClick={() => setFiltro('empresa', ativo ? '' : x.chave)}
+                      style={{ width: '100%', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', opacity: !f.empresa || ativo ? 1 : 0.5 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="linha entre pequeno">
+                          <span className="truncar">{x.chave !== '—' ? <code className="muted">{x.chave}</code> : null} {x.rotulo}</span>
+                          <strong>{numero(x.nao_lancadas)} · {brl(x.valor)}</strong>
+                        </div>
+                        <div className="barra-progresso"><div style={{ width: `${(x.nao_lancadas / max) * 100}%`, background: 'var(--status-critico)' }} /></div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Cartao>
+          )}
+
           {Boolean(d.por_prestador.length) && (
             <Cartao titulo="Prestadores com mais notas não lançadas" sub="clique para filtrar" semPadding>
               <div style={{ padding: 12 }}>
@@ -179,6 +205,14 @@ export default function MalhaFina() {
           <Cartao titulo="Notas da planilha" sub={`${numero(d.total)} linha(s)${f.situacao ? ` · ${CORES[f.situacao]?.rotulo}` : ''}`} semPadding
             acoes={<div className="linha" style={{ gap: 8 }}>
               <input placeholder="prestador, CNPJ ou número" value={f.busca} onChange={(e) => setFiltro('busca', e.target.value)} style={{ width: 210 }} />
+              <select value={f.empresa} onChange={(e) => setFiltro('empresa', e.target.value)} aria-label="Empresa">
+                <option value="">Todas as empresas</option>
+                {d.por_empresa.map((x) => (
+                  <option key={x.chave} value={x.chave}>
+                    {x.chave !== '—' ? `${x.chave} · ` : ''}{x.rotulo} ({numero(x.qtd)}{x.nao_lancadas ? ` · ${numero(x.nao_lancadas)} sem lançar` : ''})
+                  </option>
+                ))}
+              </select>
               <select value={f.situacao} onChange={(e) => setFiltro('situacao', e.target.value)} aria-label="Situação">
                 <option value="">Todas as situações</option>
                 {d.por_situacao.map((s) => <option key={s.chave} value={s.chave}>{CORES[s.chave]?.rotulo ?? s.rotulo} ({numero(s.qtd)})</option>)}
@@ -189,7 +223,7 @@ export default function MalhaFina() {
               <table className="tabela">
                 <thead>
                   <tr>
-                    <th>Situação</th><th>Competência</th><th>Prestador</th><th>NFS-e</th>
+                    <th>Situação</th><th>Competência</th><th>Empresa</th><th>Prestador</th><th>NFS-e</th>
                     <th className="num">Valor da planilha</th><th>No Senior</th><th className="num">Valor no Senior</th>
                   </tr>
                 </thead>
@@ -200,6 +234,11 @@ export default function MalhaFina() {
                       <tr key={n.id} style={{ background: c.fundo }}>
                         <td><span className="badge" style={{ background: c.cor, color: '#fff' }}>{c.rotulo}</span></td>
                         <td>{data(n.competencia)}</td>
+                        <td>
+                          {n.entrada_empresa
+                            ? <><code className="muted">{n.entrada_empresa_chave}</code> {n.entrada_empresa}</>
+                            : <span className="muted" title={n.empresa ?? ''}>sem entrada no Senior</span>}
+                        </td>
                         <td>
                           <div className="truncar" style={{ maxWidth: 260 }}>{n.prestador ?? '—'}</div>
                           <div className="muted pequeno">{fmtCnpj(n.cnpj_prestador)}{n.municipio_prestador ? ` · ${n.municipio_prestador}` : ''}</div>
@@ -223,7 +262,7 @@ export default function MalhaFina() {
                       </tr>
                     );
                   })}
-                  {!d.notas.length && <tr><td colSpan={7} className="muted" style={{ padding: 16 }}>Nenhuma nota com esse filtro.</td></tr>}
+                  {!d.notas.length && <tr><td colSpan={8} className="muted" style={{ padding: 16 }}>Nenhuma nota com esse filtro.</td></tr>}
                 </tbody>
               </table>
             </div>
