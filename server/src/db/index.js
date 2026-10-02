@@ -32,6 +32,8 @@ garantirColuna('documentos', 'senior_verificado_em', 'TEXT');
 garantirColuna('documentos', 'oc_documento', 'TEXT');   // ordem de compra citada na nota
 garantirColuna('documentos', 'senior_ocs', 'TEXT');     // JSON: OCs do Senior (da nota lançada ou em aberto do fornecedor)
 garantirColuna('dfe_controle', 'ultimo_aviso', 'TEXT'); // 656 da SEFAZ (janela de 1 hora), separado dos erros
+// Malha fina: diferença entre o bruto da planilha e o líquido do Senior (normalmente a retenção)
+garantirColuna('malha_fina_notas', 'diferenca_valor', 'REAL');
 
 const cache = new Map();
 function stmt(sql) {

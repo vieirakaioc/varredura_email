@@ -470,3 +470,49 @@ CREATE TABLE IF NOT EXISTS pendencia_motivos (
   usuario_id INTEGER,
   atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- Malha fina: planilha de serviços tomados que a contabilidade manda (NFS-e que o fisco já conhece).
+-- Cada lote é um arquivo importado; as notas ficam guardadas para conferir, quantas vezes for preciso,
+-- se já viraram nota de entrada no Senior.
+CREATE TABLE IF NOT EXISTS malha_fina_lotes (
+  id INTEGER PRIMARY KEY,
+  arquivo TEXT NOT NULL,
+  hash TEXT NOT NULL UNIQUE,         -- conteúdo do arquivo: reimportar o mesmo arquivo atualiza o lote
+  competencia TEXT,                  -- AAAA-MM predominante das notas
+  notas INTEGER NOT NULL DEFAULT 0,
+  usuario_id INTEGER,
+  conferido_em TEXT,                 -- última vez que foi conferido no Senior
+  observacao TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS malha_fina_notas (
+  id INTEGER PRIMARY KEY,
+  lote_id INTEGER NOT NULL REFERENCES malha_fina_lotes(id) ON DELETE CASCADE,
+  cnpj_empresa TEXT,
+  empresa TEXT,
+  numero TEXT,                       -- número da NFS-e
+  codigo_verificador TEXT,
+  chave TEXT,                        -- chave da nota nacional, quando a planilha traz
+  competencia TEXT,                  -- AAAA-MM-DD
+  emissao TEXT,
+  cancelada_na_prefeitura INTEGER NOT NULL DEFAULT 0,
+  cnpj_prestador TEXT,
+  prestador TEXT,
+  municipio_prestador TEXT,
+  valor REAL,
+  valor_liquido REAL,
+  -- resultado da conferência no Senior
+  situacao TEXT NOT NULL DEFAULT 'nao_conferida',  -- lancada | nao_lancada | cancelada_senior | valor_divergente | cancelada_prefeitura
+  entrada_numero TEXT,
+  entrada_empresa TEXT,
+  entrada_data TEXT,
+  entrada_lancada_em TEXT,
+  entrada_valor REAL,
+  diferenca_valor REAL,              -- planilha (bruto) - Senior (líquido): normalmente é a retenção
+  entrada_usuario TEXT,
+  conferido_em TEXT,
+  linha INTEGER,                     -- linha na planilha original
+  UNIQUE (lote_id, cnpj_prestador, numero, codigo_verificador)
+);
+CREATE INDEX IF NOT EXISTS ix_malha_notas_lote ON malha_fina_notas(lote_id, situacao);

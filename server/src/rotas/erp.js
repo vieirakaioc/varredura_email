@@ -2,6 +2,7 @@
 // Autenticação por chave de API (header X-API-Key); apenas o hash da chave é armazenado.
 // Fluxo sugerido: o ERP consulta documentos APROVADOS com erp_status = 'pendente', importa e confirma.
 import { Router } from 'express';
+import multer from 'multer';
 import { all, get, insert, parseJSON, run } from '../db/index.js';
 import { permitir } from '../auth.js';
 import { auditar } from '../util/log.js';
@@ -80,6 +81,36 @@ rotasErpAdmin.get('/pendentes-lancamento/diagnostico', permitir('ver'), async (r
   const { diagnosticarPendentes } = await import('../erp/pendentes.js');
   try { res.json(await diagnosticarPendentes(req.query.busca)); } catch (e) { erroSenior(res, e); }
 });
+// ------------------------------------------------------------------ malha fina (planilha da contabilidade)
+const uploadPlanilha = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+rotasErpAdmin.get('/malha-fina', permitir('ver'), async (req, res) => {
+  const { listarLotes } = await import('../erp/malhafina.js');
+  res.json({ lotes: listarLotes() });
+});
+rotasErpAdmin.get('/malha-fina/:id', permitir('ver'), async (req, res) => {
+  const { painelLote } = await import('../erp/malhafina.js');
+  try { res.json(painelLote(Number(req.params.id), req.query)); } catch (e) { res.status(404).json({ erro: e.message }); }
+});
+rotasErpAdmin.post('/malha-fina', permitir('decidir'), uploadPlanilha.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ erro: 'Envie a planilha (.xlsx) da contabilidade' });
+  const { importarPlanilha } = await import('../erp/malhafina.js');
+  try {
+    const r = await importarPlanilha({ buffer: req.file.buffer, nomeArquivo: req.file.originalname, usuarioId: req.usuario.id });
+    auditar(req.usuario.id, 'malha_fina.importar', 'lote', r.lote_id, { arquivo: req.file.originalname, ...r.resumo }, req.ip);
+    res.json(r);
+  } catch (e) { erroSenior(res, e); }
+});
+rotasErpAdmin.post('/malha-fina/:id/conferir', permitir('ver'), async (req, res) => {
+  const { conferirLote } = await import('../erp/malhafina.js');
+  try { res.json(await conferirLote(Number(req.params.id), { forcar: true })); } catch (e) { erroSenior(res, e); }
+});
+rotasErpAdmin.delete('/malha-fina/:id', permitir('decidir'), async (req, res) => {
+  const { apagarLote } = await import('../erp/malhafina.js');
+  auditar(req.usuario.id, 'malha_fina.apagar', 'lote', req.params.id, {}, req.ip);
+  res.json(apagarLote(Number(req.params.id)));
+});
+
 rotasErpAdmin.get('/lancamentos', permitir('ver'), async (req, res) => {
   const { painelLancamentos } = await import('../erp/lancamentos.js');
   try { res.json(await painelLancamentos(req.query)); } catch (e) { erroSenior(res, e); }

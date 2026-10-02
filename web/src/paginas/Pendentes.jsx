@@ -5,6 +5,7 @@ import { api, qs } from '../api.js';
 import { Topo, useAuth } from '../contexto.jsx';
 import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 import Lancamentos from './Lancamentos.jsx';
+import MalhaFina from './MalhaFina.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
 const brlCurto = (v) => (Math.abs(v) >= 1000000 ? `R$ ${(v / 1000000).toFixed(1)} mi` : Math.abs(v) >= 1000 ? `R$ ${Math.round(v / 1000)} mil` : brl(v));
@@ -86,7 +87,9 @@ function Dica({ active, payload, label, sufixo }) {
 
 export default function Pendentes() {
   const [params] = useSearchParams();
-  return params.get('aba') === 'lancamentos' ? <ComAbas><Lancamentos /></ComAbas> : <ComAbas><PainelPendentes /></ComAbas>;
+  const aba = params.get('aba');
+  const painel = aba === 'lancamentos' ? <Lancamentos /> : aba === 'malha' ? <MalhaFina /> : <PainelPendentes />;
+  return <ComAbas>{painel}</ComAbas>;
 }
 
 /** Cabeçalho comum das duas visões: o que falta lançar e quem está lançando. */
@@ -96,7 +99,7 @@ function ComAbas({ children }) {
   // Cada aba lembra os próprios filtros: trocar de aba (ou de tela) não zera o que estava filtrado
   const trocarAba = (alvo) => {
     const p = new URLSearchParams(filtrosLembrados(alvo));
-    if (alvo === 'lancamentos') p.set('aba', 'lancamentos'); else p.delete('aba');
+    if (alvo === 'pendentes') p.delete('aba'); else p.set('aba', alvo);
     setParams(p);
   };
   return (
@@ -106,6 +109,7 @@ function ComAbas({ children }) {
         <div className="abas" style={{ padding: 0 }}>
           <button className={aba === 'pendentes' ? 'ativa' : ''} onClick={() => trocarAba('pendentes')}>Pendentes de lançamento</button>
           <button className={aba === 'lancamentos' ? 'ativa' : ''} onClick={() => trocarAba('lancamentos')}>Produtividade do lançamento</button>
+          <button className={aba === 'malha' ? 'ativa' : ''} onClick={() => trocarAba('malha')}>Malha fina</button>
         </div>
         {children}
       </div>
