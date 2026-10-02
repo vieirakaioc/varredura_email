@@ -46,6 +46,12 @@ const COLUNAS_RETENCAO = ['iss dentro do municipio', 'iss fora do municipio', 'v
 
 const semAcento = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 const digitos = (s) => String(s ?? '').replace(/\D/g, '');
+// O Senior guarda CGCCPF sem o zero à esquerda (4740876000125), a planilha traz com máscara
+// (04.740.876/0001-25). Sem completar com zero, nenhum CNPJ começado em 0 casava.
+const documento = (s) => {
+  const d = digitos(s);
+  return d ? d.padStart(d.length > 11 ? 14 : 11, '0') : '';
+};
 const texto = (v) => {
   if (v == null) return null;
   if (typeof v === 'object') return String(v.text ?? v.result ?? v.richText?.map((r) => r.text).join('') ?? '').trim() || null;
@@ -143,11 +149,11 @@ export async function lerPlanilha(buffer) {
   for (let n = 2; n <= ws.rowCount; n += 1) {
     const linha = ws.getRow(n);
     const numeroNota = texto(celula(linha, 'numero'));
-    const cnpjPrestador = digitos(celula(linha, 'cnpj_prestador'));
+    const cnpjPrestador = documento(celula(linha, 'cnpj_prestador'));
     if (!numeroNota || !cnpjPrestador) continue;  // linhas de rodapé/total
     const cancelada = Boolean(texto(celula(linha, 'cancelamento')) || texto(celula(linha, 'exclusao')));
     notas.push({
-      cnpj_empresa: digitos(celula(linha, 'cnpj_empresa')) || null,
+      cnpj_empresa: documento(celula(linha, 'cnpj_empresa')) || null,
       empresa: texto(celula(linha, 'empresa')),
       numero: numeroNota,
       codigo_verificador: texto(celula(linha, 'codigo_verificador')),
@@ -239,7 +245,7 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
   // (empresas diferentes do grupo), então guardamos a lista.
   const porChave = new Map();
   for (const l of linhas) {
-    const chave = `${digitos(l.CNPJ_PRESTADOR)}|${digitos(l.NUMNFC)}`;
+    const chave = `${documento(l.CNPJ_PRESTADOR)}|${digitos(l.NUMNFC)}`;
     if (!porChave.has(chave)) porChave.set(chave, []);
     porChave.get(chave).push(l);
   }
@@ -249,9 +255,9 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
   const resumo = {};
   tx(() => {
     for (const nota of notas) {
-      const candidatas = porChave.get(`${nota.cnpj_prestador}|${digitos(nota.numero)}`) ?? [];
+      const candidatas = porChave.get(`${documento(nota.cnpj_prestador)}|${digitos(nota.numero)}`) ?? [];
       // Entre várias, prefere a da mesma empresa tomadora e, depois, a que não está cancelada
-      const mesmaEmpresa = nota.cnpj_empresa ? candidatas.filter((l) => digitos(l.CNPJ_EMPRESA) === nota.cnpj_empresa) : [];
+      const mesmaEmpresa = nota.cnpj_empresa ? candidatas.filter((l) => documento(l.CNPJ_EMPRESA) === documento(nota.cnpj_empresa)) : [];
       const lista = mesmaEmpresa.length ? mesmaEmpresa : candidatas;
       const ativa = lista.find((l) => String(l.SITNFC).trim() !== '3');
       const achada = ativa ?? lista[0] ?? null;
