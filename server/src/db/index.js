@@ -36,7 +36,16 @@ garantirColuna('dfe_controle', 'ultimo_aviso', 'TEXT'); // 656 da SEFAZ (janela 
 garantirColuna('malha_fina_notas', 'diferenca_valor', 'REAL');
 garantirColuna('malha_fina_notas', 'retencao', 'TEXT');              // alíquota que explica a diferença
 garantirColuna('malha_fina_notas', 'retencoes_planilha', 'REAL');
-garantirColuna('malha_fina_notas', 'entrada_empresa_chave', 'TEXT');  // codemp/codfil da filial que lançou    // soma das retenções que a contabilidade informou
+garantirColuna('malha_fina_notas', 'entrada_empresa_chave', 'TEXT');  // codemp/codfil da filial que lançou
+// Segundo layout da contabilidade: relatório da EFD, com chave de acesso
+garantirColuna('malha_fina_lotes', 'tipo', "TEXT NOT NULL DEFAULT 'servicos_tomados'");
+garantirColuna('malha_fina_notas', 'serie', 'TEXT');
+garantirColuna('malha_fina_notas', 'modelo', 'TEXT');
+garantirColuna('malha_fina_notas', 'cfop', 'TEXT');
+garantirColuna('malha_fina_notas', 'status_planilha', 'TEXT');
+garantirColuna('malha_fina_notas', 'saida_numero', 'TEXT');
+garantirColuna('malha_fina_notas', 'saida_empresa', 'TEXT');
+garantirColuna('malha_fina_notas', 'saida_empresa_chave', 'TEXT');    // soma das retenções que a contabilidade informou
 
 const cache = new Map();
 function stmt(sql) {

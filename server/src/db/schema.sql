@@ -478,6 +478,7 @@ CREATE TABLE IF NOT EXISTS malha_fina_lotes (
   id INTEGER PRIMARY KEY,
   arquivo TEXT NOT NULL,
   hash TEXT NOT NULL UNIQUE,         -- conteúdo do arquivo: reimportar o mesmo arquivo atualiza o lote
+  tipo TEXT NOT NULL DEFAULT 'servicos_tomados',  -- servicos_tomados | efd
   competencia TEXT,                  -- AAAA-MM predominante das notas
   notas INTEGER NOT NULL DEFAULT 0,
   usuario_id INTEGER,
@@ -491,7 +492,11 @@ CREATE TABLE IF NOT EXISTS malha_fina_notas (
   lote_id INTEGER NOT NULL REFERENCES malha_fina_lotes(id) ON DELETE CASCADE,
   cnpj_empresa TEXT,
   empresa TEXT,
-  numero TEXT,                       -- número da NFS-e
+  numero TEXT,                       -- número da nota
+  serie TEXT,
+  modelo TEXT,                       -- 55 (NF-e), 57 (CT-e), 65 (NFC-e)...
+  cfop TEXT,
+  status_planilha TEXT,              -- o que a contabilidade apontou (ex.: "XML não presente na EFD")
   codigo_verificador TEXT,
   chave TEXT,                        -- chave da nota nacional, quando a planilha traz
   competencia TEXT,                  -- AAAA-MM-DD

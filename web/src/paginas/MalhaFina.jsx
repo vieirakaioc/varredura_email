@@ -3,11 +3,14 @@ import { useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
 import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
 
+const MODELOS = { 55: 'NF-e', 57: 'CT-e', 65: 'NFC-e', 58: 'MDF-e', 59: 'SAT', 67: 'CT-e OS' };
+
 // Cor de cada resultado da conferência. É o centro da tela: dá para bater o olho e ver o que falta lançar.
 const CORES = {
   lancada: { cor: 'var(--status-bom)', fundo: 'color-mix(in srgb, var(--status-bom) 12%, transparent)', rotulo: 'Lançada' },
   nao_lancada: { cor: 'var(--status-critico)', fundo: 'color-mix(in srgb, var(--status-critico) 14%, transparent)', rotulo: 'NÃO lançada' },
   valor_divergente: { cor: 'var(--status-atencao)', fundo: 'color-mix(in srgb, var(--status-atencao) 14%, transparent)', rotulo: 'Valor não bate' },
+  so_saida: { cor: 'var(--serie-1)', fundo: 'color-mix(in srgb, var(--serie-1) 10%, transparent)', rotulo: 'Emitida, sem entrada' },
   cancelada_senior: { cor: 'var(--dup)', fundo: 'color-mix(in srgb, var(--dup) 12%, transparent)', rotulo: 'Entrada cancelada' },
   cancelada_prefeitura: { cor: 'var(--texto-fraco)', fundo: 'transparent', rotulo: 'Cancelada na prefeitura' },
   nao_conferida: { cor: 'var(--texto-fraco)', fundo: 'transparent', rotulo: 'Não conferida' },
@@ -31,6 +34,25 @@ const COLUNAS_EXPORTAR = [
   { titulo: 'Diferença', tipo: 'moeda', valor: (n) => n.diferenca_valor },
   { titulo: 'Explicação da diferença', valor: (n) => n.retencao },
   { titulo: 'Retenções na planilha', tipo: 'moeda', valor: (n) => n.retencoes_planilha },
+  { titulo: 'Linha na planilha', tipo: 'numero', valor: (n) => n.linha },
+];
+
+const COLUNAS_EFD = [
+  { titulo: 'Situação', valor: (n) => CORES[n.situacao]?.rotulo ?? n.situacao },
+  { titulo: 'Apontamento da contabilidade', valor: (n) => n.status_planilha },
+  { titulo: 'Emissão', tipo: 'data', valor: (n) => n.emissao },
+  { titulo: 'Modelo', valor: (n) => n.modelo },
+  { titulo: 'Série', valor: (n) => n.serie },
+  { titulo: 'Número', valor: (n) => n.numero },
+  { titulo: 'CFOP', valor: (n) => n.cfop },
+  { titulo: 'Chave de acesso', valor: (n) => n.chave },
+  { titulo: 'CNPJ do emitente', valor: (n) => n.cnpj_prestador },
+  { titulo: 'Valor', tipo: 'moeda', valor: (n) => n.valor },
+  { titulo: 'Saída no Senior', valor: (n) => n.saida_numero },
+  { titulo: 'Empresa da saída', valor: (n) => n.saida_empresa },
+  { titulo: 'Entrada no Senior', valor: (n) => n.entrada_numero },
+  { titulo: 'Empresa da entrada', valor: (n) => n.entrada_empresa },
+  { titulo: 'Data de entrada', tipo: 'data', valor: (n) => n.entrada_data },
   { titulo: 'Linha na planilha', tipo: 'numero', valor: (n) => n.linha },
 ];
 
@@ -105,6 +127,7 @@ export default function MalhaFina() {
 
   const d = painel.dados;
   const k = d?.indicadores;
+  const efd = d?.lote?.tipo === 'efd';
 
   return (
     <>
@@ -126,9 +149,10 @@ export default function MalhaFina() {
             </button>
           </div>
           <div className="muted pequeno">
-            Relatório de serviços tomados em .xlsx, com o cabeçalho original. As colunas são achadas pelo nome —
-            precisa ter pelo menos “Número NFe” e “Cnpj/Cpf Prestador”. A planilha fica guardada aqui: dá para
-            reconferir quando quiser, sem reenviar.
+            Dois relatórios são reconhecidos, pelo cabeçalho da primeira linha: <strong>serviços tomados</strong>
+            (com “Número NFe” e “Cnpj/Cpf Prestador”) e <strong>EFD</strong> (com “Status” e “Chave”). As colunas são
+            achadas pelo nome, então a ordem pode mudar. A planilha fica guardada aqui: dá para reconferir quando
+            quiser, sem reenviar.
           </div>
         </div>
 
@@ -137,7 +161,7 @@ export default function MalhaFina() {
             <select value={loteId} onChange={(e) => setParams({ aba: 'malha', lote: e.target.value })} aria-label="Planilha">
               {lotes.dados.lotes.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.competencia ?? 's/ competência'} · {l.arquivo} · {numero(l.notas)} notas
+                  {l.competencia ?? 's/ competência'} · {l.tipo === 'efd' ? 'EFD' : 'serviços tomados'} · {l.arquivo} · {numero(l.notas)} notas
                   {l.nao_lancadas ? ` · ${numero(l.nao_lancadas)} não lançadas` : ''}
                 </option>
               ))}
@@ -171,7 +195,7 @@ export default function MalhaFina() {
             ))}
           </div>
 
-          <Cartao>
+          {!efd && <Cartao>
             <div className="linha" style={{ gap: 10, flexWrap: 'wrap' }}>
               <label className="linha" style={{ gap: 6 }} title="PJ = prestador de serviço continuado da empresa; a nota existe, mas não é compra a lançar pela escrita fiscal">
                 <input type="checkbox" checked={!d.pj.com_pj} onChange={() => setFiltro('com_pj', d.pj.com_pj ? '' : '1')} />
@@ -201,7 +225,7 @@ export default function MalhaFina() {
                 {!listaPj.dados?.pj?.length && <span className="muted pequeno">Nenhum PJ cadastrado.</span>}
               </div>
             )}
-          </Cartao>
+          </Cartao>}
 
           {Boolean(d.por_empresa.filter((x) => x.nao_lancadas).length) && (
             <Cartao titulo="Empresas com notas não lançadas" sub="clique para filtrar" semPadding>
@@ -226,7 +250,7 @@ export default function MalhaFina() {
             </Cartao>
           )}
 
-          {Boolean(d.por_prestador.length) && (
+          {!efd && Boolean(d.por_prestador.length) && (
             <Cartao titulo="Prestadores com mais notas não lançadas" sub="clique para filtrar" semPadding>
               <div style={{ padding: 12 }}>
                 {d.por_prestador.map((p) => {
@@ -263,19 +287,46 @@ export default function MalhaFina() {
                 <option value="">Todas as situações</option>
                 {d.por_situacao.map((s) => <option key={s.chave} value={s.chave}>{CORES[s.chave]?.rotulo ?? s.rotulo} ({numero(s.qtd)})</option>)}
               </select>
-              <BotaoExportar titulo={`Malha fina ${d.lote.competencia ?? ''}`} linhas={d.notas} colunas={COLUNAS_EXPORTAR} />
+              <BotaoExportar titulo={`Malha fina ${d.lote.competencia ?? ''}`} linhas={d.notas} colunas={efd ? COLUNAS_EFD : COLUNAS_EXPORTAR} />
             </div>}>
             <div className="tabela-wrap">
               <table className="tabela">
                 <thead>
                   <tr>
-                    <th>Situação</th><th>Competência</th><th>Empresa</th><th>Prestador</th><th>NFS-e</th>
-                    <th className="num">Valor da planilha</th><th>No Senior</th><th className="num">Valor no Senior</th>
+                    {efd
+                      ? <><th>Situação</th><th>Emissão</th><th>Documento</th><th>Emitente</th><th className="num">Valor</th><th>No Senior</th></>
+                      : <><th>Situação</th><th>Competência</th><th>Empresa</th><th>Prestador</th><th>NFS-e</th>
+                        <th className="num">Valor da planilha</th><th>No Senior</th><th className="num">Valor no Senior</th></>}
                   </tr>
                 </thead>
                 <tbody>
                   {d.notas.map((n) => {
                     const c = CORES[n.situacao] ?? CORES.nao_conferida;
+                    if (efd) {
+                      return (
+                        <tr key={n.id} style={{ background: c.fundo }}>
+                          <td>
+                            <span className="badge" style={{ background: c.cor, color: '#fff' }}>{c.rotulo}</span>
+                            {n.status_planilha ? <div className="muted pequeno">{n.status_planilha}</div> : null}
+                          </td>
+                          <td>{data(n.emissao)}</td>
+                          <td>
+                            {MODELOS[n.modelo] ?? `Modelo ${n.modelo}`} {n.serie ? `série ${n.serie} ` : ''}nº {n.numero}
+                            <div className="muted pequeno" title={n.chave}>CFOP {n.cfop ?? '—'} · …{String(n.chave ?? '').slice(-12)}</div>
+                          </td>
+                          <td>
+                            <div className="truncar" style={{ maxWidth: 220 }}>{n.saida_empresa ?? fmtCnpj(n.cnpj_prestador)}</div>
+                            <div className="muted pequeno">{n.saida_empresa ? 'do grupo' : 'de fora do grupo'}</div>
+                          </td>
+                          <td className="num">{brl(n.valor)}</td>
+                          <td>
+                            {n.saida_numero && <div><code className="muted">{n.saida_empresa_chave}</code> saída nº {n.saida_numero}</div>}
+                            {n.entrada_numero && <div><code className="muted">{n.entrada_empresa_chave}</code> entrada nº {n.entrada_numero} · {data(n.entrada_data)}</div>}
+                            {!n.saida_numero && !n.entrada_numero && <span className="muted">não está no Senior</span>}
+                          </td>
+                        </tr>
+                      );
+                    }
                     return (
                       <tr key={n.id} style={{ background: c.fundo }}>
                         <td><span className="badge" style={{ background: c.cor, color: '#fff' }}>{c.rotulo}</span></td>
@@ -313,7 +364,7 @@ export default function MalhaFina() {
                       </tr>
                     );
                   })}
-                  {!d.notas.length && <tr><td colSpan={8} className="muted" style={{ padding: 16 }}>Nenhuma nota com esse filtro.</td></tr>}
+                  {!d.notas.length && <tr><td colSpan={efd ? 6 : 8} className="muted" style={{ padding: 16 }}>Nenhuma nota com esse filtro.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -322,6 +373,14 @@ export default function MalhaFina() {
             )}
           </Cartao>
 
+          {efd ? (
+            <p className="muted pequeno">
+              Como a conferência é feita: cada linha é procurada no Senior pela <strong>chave de acesso</strong>, nos documentos
+              que o grupo emitiu (E140IDE) e nas notas de entrada (E440NFC). Em transferência entre filiais a nota aparece dos
+              dois lados. Achar a nota no Senior e a contabilidade dizer que ela não está na EFD aponta para a
+              <strong> escrituração</strong>, não para o lançamento — já “não está no Senior” é nota que ninguém lançou.
+            </p>
+          ) : (
           <p className="muted pequeno">
             Como a conferência é feita: cada linha da planilha é procurada nas notas de entrada do Senior pelo
             <strong> CNPJ do prestador + número da nota</strong>, preferindo a entrada da mesma empresa tomadora. O Senior guarda o
@@ -330,6 +389,7 @@ export default function MalhaFina() {
             O que nenhuma alíquota explica fica marcado como <strong>valor não bate</strong>, porque aí não é retenção: é lançamento
             com valor diferente do documento.
           </p>
+          )}
         </>
       )}
     </>

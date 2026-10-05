@@ -14,6 +14,7 @@ import { comCache, versaoSql } from './cache.js';
 
 export const SITUACOES = {
   lancada: 'Lançada no Senior',
+  so_saida: 'Emitida, sem entrada no grupo',
   nao_lancada: 'NÃO lançada',
   valor_divergente: 'Valor não bate',
   cancelada_senior: 'Entrada cancelada no Senior',
@@ -30,7 +31,7 @@ const COLUNAS = {
   codigo_verificador: ['codigo verificador'],
   chave: ['chave nota nacional', 'chave de acesso', 'chave'],
   competencia: ['data competencia', 'competencia'],
-  emissao: ['emissao nfe', 'emissao rps', 'data emissao'],
+  emissao: ['emissao nfe', 'emissao rps', 'data emissao', 'emissao'],
   cancelamento: ['cancelamento'],
   exclusao: ['exclusao'],
   prestador: ['prestador'],
@@ -38,6 +39,12 @@ const COLUNAS = {
   municipio_prestador: ['municipio prestador'],
   valor: ['valor nfe', 'valor da nfe', 'valor total'],
   valor_liquido: ['valor liquido'],
+  // segundo layout (relatório da EFD): a chave de acesso é a identificação
+  status_planilha: ['status'],
+  modelo: ['modelo nota', 'modelo'],
+  serie: ['serie'],
+  cfop: ['cfop'],
+  status_cancelamento: ['status cancelamento'],
 };
 
 // Retenções informadas pela contabilidade. Somadas, explicam a diferença para o líquido do Senior.
@@ -139,12 +146,17 @@ export async function lerPlanilha(buffer) {
   const ws = wb.worksheets[0];
   if (!ws) throw new Error('A planilha está vazia');
   const mapa = mapearColunas(ws.getRow(1));
-  const faltando = ['numero', 'cnpj_prestador'].filter((c) => !mapa[c]);
-  if (faltando.length) {
-    throw new Error('Não encontrei as colunas "Número NFe" e "Cnpj/Cpf Prestador" na primeira linha da planilha. '
-      + 'Envie o relatório de serviços tomados da contabilidade com o cabeçalho original.');
-  }
   const celula = (linha, campo) => (mapa[campo] ? linha.getCell(mapa[campo]).value : null);
+  // Dois relatórios diferentes chegam da contabilidade:
+  //   servicos_tomados = NFS-e tomadas (sem chave de acesso; casa por CNPJ + número)
+  //   efd              = o que o fisco tem e não entrou na escrituração (casa pela chave de acesso)
+  const tipo = mapa.chave && mapa.status_planilha ? 'efd' : 'servicos_tomados';
+  if (tipo === 'servicos_tomados' && !(mapa.numero && mapa.cnpj_prestador)) {
+    throw new Error('Não reconheci o layout da planilha. Esperava o relatório de serviços tomados '
+      + '(com "Número NFe" e "Cnpj/Cpf Prestador") ou o relatório da EFD (com "Status" e "Chave"), '
+      + 'com o cabeçalho original na primeira linha.');
+  }
+  if (tipo === 'efd') return lerPlanilhaEfd(ws, mapa, celula);
   const notas = [];
   for (let n = 2; n <= ws.rowCount; n += 1) {
     const linha = ws.getRow(n);
@@ -175,22 +187,57 @@ export async function lerPlanilha(buffer) {
   const meses = notas.map((i) => (i.competencia ?? i.emissao ?? '').slice(0, 7)).filter(Boolean);
   const competencia = [...meses.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map()).entries()]
     .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  return { notas, competencia, aba: ws.name };
+  return { notas, competencia, aba: ws.name, tipo: 'servicos_tomados' };
+}
+
+/**
+ * Relatório da EFD: uma linha por documento que o fisco tem e a escrituração não.
+ * A chave de acesso identifica a nota sem ambiguidade, então é ela que casa com o Senior.
+ * O arquivo costuma vir com dezenas de milhares de linhas vazias depois dos dados.
+ */
+function lerPlanilhaEfd(ws, mapa, celula) {
+  const notas = [];
+  for (let n = 2; n <= ws.rowCount; n += 1) {
+    const linha = ws.getRow(n);
+    const chave = digitos(celula(linha, 'chave'));
+    if (chave.length !== 44) continue;   // linha vazia ou de rodapé
+    const cancelado = texto(celula(linha, 'status_cancelamento'));
+    notas.push({
+      chave,
+      // Posições 7 a 20 da chave: CNPJ de quem emitiu. É por ele que se sabe se a nota é nossa.
+      cnpj_prestador: chave.slice(6, 20),
+      numero: String(Number(chave.slice(25, 34))),
+      serie: texto(celula(linha, 'serie')),
+      modelo: texto(celula(linha, 'modelo')) ?? chave.slice(20, 22),
+      cfop: texto(celula(linha, 'cfop')),
+      emissao: dia(celula(linha, 'emissao')),
+      competencia: dia(celula(linha, 'emissao')),
+      valor: numero(celula(linha, 'valor')),
+      status_planilha: texto(celula(linha, 'status_planilha')),
+      cancelada_na_prefeitura: cancelado && !/^ok$/i.test(cancelado) ? 1 : 0,
+      linha: n,
+    });
+  }
+  if (!notas.length) throw new Error('Não achei nenhuma linha com chave de acesso de 44 dígitos na planilha.');
+  const meses = notas.map((i) => (i.emissao ?? '').slice(0, 7)).filter(Boolean);
+  const competencia = [...meses.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map()).entries()]
+    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  return { notas, competencia, aba: ws.name, tipo: 'efd' };
 }
 
 /** Importa a planilha (ou atualiza o lote, se o mesmo arquivo já tiver sido enviado). */
 export async function importarPlanilha({ buffer, nomeArquivo, usuarioId }) {
-  const { notas, competencia } = await lerPlanilha(buffer);
+  const { notas, competencia, tipo } = await lerPlanilha(buffer);
   const hash = crypto.createHash('sha256').update(buffer).digest('hex');
   let jaExistia = false;
   const loteId = tx(() => {
     const existente = get('SELECT id FROM malha_fina_lotes WHERE hash = ?', [hash]);
     jaExistia = Boolean(existente);
     const id = existente?.id ?? insert('malha_fina_lotes', {
-      arquivo: nomeArquivo ?? 'planilha.xlsx', hash, competencia, notas: notas.length, usuario_id: usuarioId ?? null,
+      arquivo: nomeArquivo ?? 'planilha.xlsx', hash, competencia, tipo, notas: notas.length, usuario_id: usuarioId ?? null,
     });
     if (existente) {
-      run('UPDATE malha_fina_lotes SET arquivo = ?, competencia = ?, notas = ? WHERE id = ?', [nomeArquivo ?? 'planilha.xlsx', competencia, notas.length, id]);
+      run('UPDATE malha_fina_lotes SET arquivo = ?, competencia = ?, notas = ?, tipo = ? WHERE id = ?', [nomeArquivo ?? 'planilha.xlsx', competencia, notas.length, tipo, id]);
       run('DELETE FROM malha_fina_notas WHERE lote_id = ?', [id]);
     }
     for (const nota of notas) {
@@ -202,7 +249,92 @@ export async function importarPlanilha({ buffer, nomeArquivo, usuarioId }) {
     return id;
   });
   const r = await conferirLote(loteId, { forcar: true });
-  return { lote_id: loteId, reimportado: jaExistia, notas_lidas: notas.length, competencia, ...r };
+  return { lote_id: loteId, reimportado: jaExistia, notas_lidas: notas.length, competencia, tipo, ...r };
+}
+
+// ------------------------------------------------------------------ conferência do relatório da EFD
+// Aqui a chave de acesso casa sem ambiguidade. A nota pode estar no Senior de dois jeitos:
+// como documento que o grupo emitiu (E140IDE) e/ou como nota de entrada (E440NFC) — em transferência
+// entre filiais, os dois. Achar a nota no ERP e ela não estar na EFD significa que o problema está na
+// escrituração, não no lançamento: é uma informação diferente, e a tela diz qual é qual.
+const SQL_EFD = `SELECT s.CHVDOE AS CHAVE, s.CODEMP AS SAIDA_EMP, s.CODFIL AS SAIDA_FIL, s.NUMNFV AS SAIDA_NUM, s.SITDOE,
+    fs.SIGFIL AS SAIDA_SIGFIL, fs.NOMFIL AS SAIDA_NOMFIL,
+    n.CODEMP AS ENT_EMP, n.CODFIL AS ENT_FIL, n.NUMNFC AS ENT_NUM, n.DATENT, n.DATGER, n.VLRLIQ, n.SITNFC,
+    fe.SIGFIL AS ENT_SIGFIL, fe.NOMFIL AS ENT_NOMFIL, u.NOMUSU
+  FROM E140IDE s
+  OUTER APPLY (SELECT TOP 1 fs.SIGFIL, fs.NOMFIL FROM E070FIL fs WHERE fs.CODEMP = s.CODEMP AND fs.CODFIL = s.CODFIL) fs
+  OUTER APPLY (SELECT TOP 1 n.CODEMP, n.CODFIL, n.NUMNFC, n.DATENT, n.DATGER, n.VLRLIQ, n.SITNFC, n.USUGER
+    FROM E440NFC n WHERE n.CHVNEL = s.CHVDOE ORDER BY n.DATENT DESC) n
+  OUTER APPLY (SELECT TOP 1 fe.SIGFIL, fe.NOMFIL FROM E070FIL fe WHERE fe.CODEMP = n.CODEMP AND fe.CODFIL = n.CODFIL) fe
+  LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
+  WHERE s.CHVDOE IN ({chaves})
+  UNION ALL
+  SELECT n.CHVNEL, NULL, NULL, NULL, NULL, NULL, NULL,
+    n.CODEMP, n.CODFIL, n.NUMNFC, n.DATENT, n.DATGER, n.VLRLIQ, n.SITNFC,
+    fe.SIGFIL, fe.NOMFIL, u.NOMUSU
+  FROM E440NFC n
+  OUTER APPLY (SELECT TOP 1 fe.SIGFIL, fe.NOMFIL FROM E070FIL fe WHERE fe.CODEMP = n.CODEMP AND fe.CODFIL = n.CODFIL) fe
+  LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
+  WHERE n.CHVNEL IN ({chaves}) AND NOT EXISTS (SELECT 1 FROM E140IDE s2 WHERE s2.CHVDOE = n.CHVNEL)`;
+
+const LOTE_CHAVES = 400;   // a consulta vai por blocos: IN com milhares de itens trava o SQL Server
+
+async function conferirEfd(loteId, notas, forcar) {
+  const chaves = [...new Set(notas.map((n) => n.chave).filter((c) => c && c.length === 44))];
+  const linhas = [];
+  for (let i = 0; i < chaves.length; i += LOTE_CHAVES) {
+    const bloco = chaves.slice(i, i + LOTE_CHAVES);
+    const lista = bloco.map((c) => `'${c}'`).join(',');
+    const sql = SQL_EFD.replaceAll('{chaves}', lista);
+    // eslint-disable-next-line no-await-in-loop
+    linhas.push(...await comCache(`malha-efd|${versaoSql(sql)}`, forcar ? 0 : 300_000, () => consultar(sql, null)));
+  }
+  const porChave = new Map();
+  for (const l of linhas) {
+    const c = String(l.CHAVE ?? '').trim();
+    if (!porChave.has(c)) porChave.set(c, l);
+    else if (l.SAIDA_NUM != null) porChave.set(c, l);   // a linha com a saída manda
+  }
+
+  const agora = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const iso = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v ? String(v).slice(0, 10) : null);
+  const nomeFilial = (sig, nome, emp, fil) => String(sig ?? '').trim() || String(nome ?? '').trim() || (emp != null ? `${emp}/${fil}` : null);
+  const resumo = {};
+  tx(() => {
+    for (const nota of notas) {
+      const a = porChave.get(nota.chave);
+      const temEntrada = a?.ENT_NUM != null;
+      const temSaida = a?.SAIDA_NUM != null;
+      const canceladaSaida = a && Number(a.SITDOE) === 9;
+      const canceladaEntrada = temEntrada && String(a.SITNFC).trim() === '3';
+
+      let situacao;
+      if (!a) situacao = nota.cancelada_na_prefeitura ? 'cancelada_prefeitura' : 'nao_lancada';
+      else if (canceladaSaida || (temEntrada && canceladaEntrada && !temSaida)) situacao = 'cancelada_senior';
+      else if (temEntrada) situacao = 'lancada';
+      else situacao = 'so_saida';   // emitimos e está no ERP, mas não há nota de entrada correspondente
+      resumo[situacao] = (resumo[situacao] ?? 0) + 1;
+
+      run(`UPDATE malha_fina_notas SET situacao = ?, entrada_numero = ?, entrada_empresa = ?, entrada_empresa_chave = ?,
+             entrada_data = ?, entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?,
+             saida_numero = ?, saida_empresa = ?, saida_empresa_chave = ?, diferenca_valor = ?, retencao = ?, conferido_em = ?
+           WHERE id = ?`,
+      [situacao,
+        temEntrada ? String(a.ENT_NUM) : null,
+        temEntrada ? nomeFilial(a.ENT_SIGFIL, a.ENT_NOMFIL, a.ENT_EMP, a.ENT_FIL) : null,
+        temEntrada ? `${a.ENT_EMP}/${a.ENT_FIL}` : null,
+        temEntrada ? iso(a.DATENT) : null,
+        temEntrada ? iso(a.DATGER) : null,
+        temEntrada && a.VLRLIQ != null ? Number(a.VLRLIQ) : null,
+        temEntrada ? String(a.NOMUSU ?? '').trim() || null : null,
+        temSaida ? String(a.SAIDA_NUM) : null,
+        temSaida ? nomeFilial(a.SAIDA_SIGFIL, a.SAIDA_NOMFIL, a.SAIDA_EMP, a.SAIDA_FIL) : null,
+        temSaida ? `${a.SAIDA_EMP}/${a.SAIDA_FIL}` : null,
+        null, null, agora, nota.id]);
+    }
+    run('UPDATE malha_fina_lotes SET conferido_em = ? WHERE id = ?', [agora, loteId]);
+  });
+  return { conferidas: notas.length, resumo, chaves_consultadas: chaves.length, encontradas: porChave.size };
 }
 
 // Notas de entrada do Senior no período do lote, para casar com a planilha.
@@ -227,6 +359,8 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
   if (!seniorConfigurado()) throw new Error('Senior não configurado');
   const notas = all('SELECT * FROM malha_fina_notas WHERE lote_id = ?', [loteId]);
   if (!notas.length) throw new Error('Lote sem notas');
+  const lote = get('SELECT tipo FROM malha_fina_lotes WHERE id = ?', [loteId]);
+  if (lote?.tipo === 'efd') return conferirEfd(loteId, notas, forcar);
 
   const datas = notas.flatMap((i) => [i.competencia, i.emissao]).filter(Boolean).sort();
   const de = new Date(`${datas[0] ?? '2020-01-01'}T00:00:00Z`);
