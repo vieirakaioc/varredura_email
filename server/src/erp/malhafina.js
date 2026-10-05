@@ -296,6 +296,25 @@ async function conferirEfd(loteId, notas, forcar) {
     else if (l.SAIDA_NUM != null) porChave.set(c, l);   // a linha com a saída manda
   }
 
+  // Nome de quem emitiu. O CNPJ sai da própria chave de acesso; o nome vem do cadastro de
+  // fornecedores ou, quando é empresa do grupo, do cadastro de filiais.
+  const emitentes = [...new Set(notas.map((n) => n.cnpj_prestador).filter(Boolean))];
+  const nomes = new Map();
+  for (let i = 0; i < emitentes.length; i += LOTE_CHAVES) {
+    const bloco = emitentes.slice(i, i + LOTE_CHAVES);
+    // com e sem o zero à esquerda: o Senior guarda os dois jeitos conforme a tabela
+    const lista = [...new Set(bloco.flatMap((c) => [c, String(Number(c))]))].map((c) => `'${c}'`).join(',');
+    const sql = `SELECT CGCCPF AS CNPJ, MAX(NOMFOR) AS NOME, 0 AS DO_GRUPO FROM E095FOR WHERE CGCCPF IN (${lista}) GROUP BY CGCCPF
+      UNION ALL
+      SELECT NUMCGC, MAX(COALESCE(SIGFIL, NOMFIL)), 1 FROM E070FIL WHERE NUMCGC IN (${lista}) GROUP BY NUMCGC`;
+    // eslint-disable-next-line no-await-in-loop
+    for (const l of await comCache(`malha-efd-nomes|${versaoSql(sql)}`, forcar ? 0 : 300_000, () => consultar(sql, null))) {
+      const doc = documento(l.CNPJ);
+      // a filial do grupo tem prioridade sobre o cadastro de fornecedor com o mesmo CNPJ
+      if (!nomes.has(doc) || l.DO_GRUPO === 1) nomes.set(doc, { nome: String(l.NOME ?? '').trim() || null, do_grupo: l.DO_GRUPO === 1 });
+    }
+  }
+
   const agora = new Date().toISOString().slice(0, 19).replace('T', ' ');
   const iso = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v ? String(v).slice(0, 10) : null);
   const nomeFilial = (sig, nome, emp, fil) => String(sig ?? '').trim() || String(nome ?? '').trim() || (emp != null ? `${emp}/${fil}` : null);
@@ -315,11 +334,13 @@ async function conferirEfd(loteId, notas, forcar) {
       else situacao = 'so_saida';   // emitimos e está no ERP, mas não há nota de entrada correspondente
       resumo[situacao] = (resumo[situacao] ?? 0) + 1;
 
-      run(`UPDATE malha_fina_notas SET situacao = ?, entrada_numero = ?, entrada_empresa = ?, entrada_empresa_chave = ?,
+      const emitente = nomes.get(nota.cnpj_prestador);
+      run(`UPDATE malha_fina_notas SET situacao = ?, prestador = ?, entrada_numero = ?, entrada_empresa = ?, entrada_empresa_chave = ?,
              entrada_data = ?, entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?,
              saida_numero = ?, saida_empresa = ?, saida_empresa_chave = ?, diferenca_valor = ?, retencao = ?, conferido_em = ?
            WHERE id = ?`,
       [situacao,
+        emitente?.nome ?? nota.prestador ?? null,
         temEntrada ? String(a.ENT_NUM) : null,
         temEntrada ? nomeFilial(a.ENT_SIGFIL, a.ENT_NOMFIL, a.ENT_EMP, a.ENT_FIL) : null,
         temEntrada ? `${a.ENT_EMP}/${a.ENT_FIL}` : null,
@@ -524,7 +545,8 @@ export function painelLote(loteId, filtros = {}) {
     const b = String(filtros.busca).toLowerCase();
     const d = digitos(b);
     notas = notas.filter((n) => (n.prestador ?? '').toLowerCase().includes(b)
-      || String(n.numero).includes(b) || (d.length >= 4 && String(n.cnpj_prestador).includes(d)));
+      || String(n.numero).includes(b) || (d.length >= 4 && String(n.cnpj_prestador).includes(d))
+      || (d.length >= 6 && String(n.chave ?? '').includes(d)));
   }
   const total = notas.length;
   return {

@@ -46,6 +46,7 @@ const COLUNAS_EFD = [
   { titulo: 'Número', valor: (n) => n.numero },
   { titulo: 'CFOP', valor: (n) => n.cfop },
   { titulo: 'Chave de acesso', valor: (n) => n.chave },
+  { titulo: 'Emitente', valor: (n) => n.prestador },
   { titulo: 'CNPJ do emitente', valor: (n) => n.cnpj_prestador },
   { titulo: 'Valor', tipo: 'moeda', valor: (n) => n.valor },
   { titulo: 'Saída no Senior', valor: (n) => n.saida_numero },
@@ -274,7 +275,7 @@ export default function MalhaFina() {
 
           <Cartao titulo="Notas da planilha" sub={`${numero(d.total)} linha(s)${f.situacao ? ` · ${CORES[f.situacao]?.rotulo}` : ''}`} semPadding
             acoes={<div className="linha" style={{ gap: 8 }}>
-              <input placeholder="prestador, CNPJ ou número" value={f.busca} onChange={(e) => setFiltro('busca', e.target.value)} style={{ width: 210 }} />
+              <input placeholder={efd ? 'emitente, CNPJ, número ou chave' : 'prestador, CNPJ ou número'} value={f.busca} onChange={(e) => setFiltro('busca', e.target.value)} style={{ width: 210 }} />
               <select value={f.empresa} onChange={(e) => setFiltro('empresa', e.target.value)} aria-label="Empresa">
                 <option value="">Todas as empresas</option>
                 {d.por_empresa.map((x) => (
@@ -315,8 +316,10 @@ export default function MalhaFina() {
                             <div className="muted pequeno" title={n.chave}>CFOP {n.cfop ?? '—'} · …{String(n.chave ?? '').slice(-12)}</div>
                           </td>
                           <td>
-                            <div className="truncar" style={{ maxWidth: 220 }}>{n.saida_empresa ?? fmtCnpj(n.cnpj_prestador)}</div>
-                            <div className="muted pequeno">{n.saida_empresa ? 'do grupo' : 'de fora do grupo'}</div>
+                            <div className="truncar" style={{ maxWidth: 220 }}>{n.prestador ?? fmtCnpj(n.cnpj_prestador)}</div>
+                            <div className="muted pequeno">
+                              {fmtCnpj(n.cnpj_prestador)} · {n.saida_empresa ? 'do grupo' : 'de fora do grupo'}
+                            </div>
                           </td>
                           <td className="num">{brl(n.valor)}</td>
                           <td>
