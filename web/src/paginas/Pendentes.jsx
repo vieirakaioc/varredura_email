@@ -118,6 +118,13 @@ function ComAbas({ children }) {
   );
 }
 
+// O sumário é desenhado no canvas, que não entende as variáveis de cor do CSS: aqui as cores são fixas.
+const COR_FAIXA_EXPORT = ['#1a7f4b', '#2b6cb0', '#d9a300', '#e8833a', '#c0392b'];
+const COR_CATEGORIA_EXPORT = {
+  combustivel: '#e8833a', servico: '#7a4fd0', frete: '#1c8c8c', energia_telecom: '#c2a100',
+  biomassa: '#6b8e23', produto: '#2b6cb0', sem_itens: '#8d98a5',
+};
+
 /**
  * Sumário executivo da fila, para quem não vai abrir o sistema.
  * As frases saem dos números: se a fila melhorar, o texto muda junto.
@@ -164,12 +171,38 @@ function resumoPendentes(dados, f) {
         detalhe: `saldo do dia: ${k.recebidas_hoje - k.lancadas_hoje >= 0 ? '+' : ''}${numero(k.recebidas_hoje - k.lancadas_hoje)}`, tom: 'neutro',
       },
     ],
-    titulo_destaques: 'Empresas com mais pendências',
-    destaques: (dados.por_empresa ?? []).slice(0, 5).map((e) => ({
-      rotulo: `${e.chave !== '—' ? `${e.chave} ` : ''}${e.rotulo}`,
-      valor: `${numero(e.qtd)} · ${brl(e.valor)}`, tom: 'critico',
-    })),
     visao,
+    secoes: [
+      {
+        tipo: 'serie', titulo: 'Chegada × lançamento',
+        sub: `${dados.serie_periodo ? `${data(dados.serie_periodo.de)} a ${data(dados.serie_periodo.ate)}` : ''} · acumulado`,
+        dias: dados.serie ?? [],
+      },
+      {
+        tipo: 'barras', titulo: 'Há quanto tempo esperam', sub: 'notas pendentes por faixa de espera', largura_rotulo: 220,
+        itens: (dados.aging ?? []).map((a, i) => ({ rotulo: a.rotulo, valor: a.qtd, cor: COR_FAIXA_EXPORT[i], detalhe: a.valor ? brl(a.valor) : null })),
+      },
+      {
+        tipo: 'barras', titulo: 'Pendentes por empresa', sub: 'top 5', largura_rotulo: 440,
+        itens: (dados.por_empresa ?? []).slice(0, 5).map((e) => ({
+          rotulo: `${e.chave !== '—' ? `${e.chave} ` : ''}${e.rotulo}`, valor: e.qtd, detalhe: brl(e.valor),
+        })),
+      },
+      {
+        tipo: 'barras', titulo: 'Por tipo de nota', sub: 'o que está parado', largura_rotulo: 260,
+        itens: (dados.por_categoria ?? []).slice(0, 5).map((c) => ({
+          rotulo: dados.categorias?.[c.chave] ?? c.rotulo ?? c.chave, valor: c.qtd, cor: COR_CATEGORIA_EXPORT[c.chave], detalhe: brl(c.valor),
+        })),
+      },
+      {
+        tipo: 'lista', titulo: 'Fornecedores com mais pendências', sub: 'top 5',
+        itens: (dados.por_fornecedor ?? []).slice(0, 5).map((p) => ({ rotulo: p.rotulo, valor: `${numero(p.qtd)} · ${brl(p.valor)}`, tom: 'critico' })),
+      },
+      (dados.por_motivo ?? []).length ? {
+        tipo: 'lista', titulo: 'Por que estão pendentes', sub: 'motivo informado pela equipe',
+        itens: dados.por_motivo.slice(0, 5).map((m) => ({ rotulo: m.rotulo, valor: `${numero(m.qtd)} · ${brl(m.valor)}` })),
+      } : null,
+    ],
     rodape: 'Fonte: XMLs recebidos no Senior (Via Recebimento de Documento Eletrônico)',
   };
 }

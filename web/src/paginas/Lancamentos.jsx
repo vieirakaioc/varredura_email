@@ -117,12 +117,23 @@ function resumoLancamentos(dados, f) {
         detalhe: 'o resto foi digitado sem XML', tom: k.pct_com_xml >= 80 ? 'bom' : 'alerta',
       },
     ],
-    titulo_destaques: 'Quem mais lançou',
-    destaques: topo.map((p, i) => ({
-      rotulo: `${i + 1}º ${p.usuario}`,
-      valor: `${numero(p.notas)} · ${numero(p.media_dia, 1)}/dia`, tom: 'neutro',
-    })),
     visao,
+    secoes: [
+      {
+        tipo: 'barras', titulo: 'Quem mais lançou', sub: 'top 5 do período', largura_rotulo: 300,
+        itens: topo.map((p) => ({ rotulo: p.usuario, valor: p.notas, detalhe: `${numero(p.media_dia, 1)}/dia · ${brl(p.valor)}` })),
+      },
+      {
+        tipo: 'barras', titulo: 'Distribuição por hora', sub: 'quando a equipe lança', largura_rotulo: 120,
+        itens: (dados.por_hora ?? []).filter((h) => h.notas > 0).map((h) => ({
+          rotulo: h.rotulo, valor: h.notas, cor: h.hora === k.pico_hora?.hora ? '#e8833a' : '#2b6cb0',
+        })),
+      },
+      {
+        tipo: 'barras', titulo: 'Por empresa', sub: 'top 5', largura_rotulo: 330,
+        itens: (dados.por_empresa ?? []).slice(0, 5).map((e) => ({ rotulo: `${e.chave} ${e.rotulo}`, valor: e.notas, detalhe: brl(e.valor) })),
+      },
+    ],
     rodape: `Fonte: notas de entrada do Senior${f.situacoes && f.situacoes !== 'todas' ? ' · filtrado por situação' : ''}`,
   };
 }

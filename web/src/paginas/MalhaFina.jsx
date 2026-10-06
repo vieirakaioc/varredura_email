@@ -109,9 +109,17 @@ function resumoMalha(d) {
     titulo: efd ? 'Malha fina · documentos fora da EFD' : 'Malha fina · serviços tomados',
     periodo: `${d.lote.arquivo}${d.lote.competencia ? ` · competência ${d.lote.competencia}` : ''}`,
     kpis,
-    titulo_destaques: efd ? 'Documentos que não estão no Senior' : 'Prestadores com mais notas não lançadas',
-    destaques,
     visao,
+    secoes: [
+      {
+        tipo: 'barras', titulo: 'Resultado da conferência', sub: 'cada nota da planilha', largura_rotulo: 340,
+        itens: d.por_situacao.map((s) => ({
+          rotulo: s.rotulo, valor: s.qtd, detalhe: brl(s.valor),
+          cor: { lancada: '#1a7f4b', nao_lancada: '#c0392b', valor_divergente: '#d9a300', so_saida: '#2b6cb0' }[s.chave] ?? '#8d98a5',
+        })),
+      },
+      { tipo: 'lista', titulo: efd ? 'Documentos que não estão no Senior' : 'Prestadores com mais notas não lançadas', itens: destaques },
+    ],
     rodape: `Conferido contra as notas do Senior${d.lote.conferido_em ? ` em ${data(d.lote.conferido_em, true)}` : ''}`,
   };
 }
