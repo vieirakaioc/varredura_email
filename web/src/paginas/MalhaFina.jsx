@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
+import { BotaoResumo } from '../resumo.jsx';
 import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
 
 const MODELOS = { 55: 'NF-e', 57: 'CT-e', 65: 'NFC-e', 58: 'MDF-e', 59: 'SAT', 67: 'CT-e OS' };
@@ -56,6 +57,64 @@ const COLUNAS_EFD = [
   { titulo: 'Data de entrada', tipo: 'data', valor: (n) => n.entrada_data },
   { titulo: 'Linha na planilha', tipo: 'numero', valor: (n) => n.linha },
 ];
+
+/** Sumário executivo da malha fina. Muda conforme o layout da planilha importada. */
+function resumoMalha(d) {
+  const k = d.indicadores;
+  const efd = d.lote.tipo === 'efd';
+  const situacao = (chave) => d.por_situacao.find((s) => s.chave === chave) ?? { qtd: 0, valor: 0 };
+  const lancadas = situacao('lancada');
+  const visao = [];
+
+  if (efd) {
+    const soSaida = situacao('so_saida');
+    const naoAchadas = situacao('nao_lancada');
+    const noSenior = lancadas.qtd + soSaida.qtd;
+    visao.push(`A contabilidade apontou ${numero(d.lote.notas)} documento(s) que o fisco tem e a escrituração não.`);
+    visao.push(`${numero(noSenior)} deles ESTÃO no Senior (${numero(lancadas.qtd)} com nota de entrada e ${numero(soSaida.qtd)} só como emissão): `
+      + 'nesses, o problema é de escrituração, não de lançamento.');
+    if (naoAchadas.qtd) visao.push(`${numero(naoAchadas.qtd)} documento(s) NÃO estão no Senior (${brl(naoAchadas.valor)}) — esses ninguém lançou.`);
+    else visao.push('Nenhum documento ficou de fora do Senior.');
+  } else {
+    visao.push(`A planilha trouxe ${numero(d.lote.notas)} NFS-e tomadas; ${numero(lancadas.qtd)} já estão lançadas no Senior.`);
+    if (k.nao_lancadas) visao.push(`${numero(k.nao_lancadas)} nota(s) não foram lançadas, somando ${brl(k.valor_nao_lancado)}.`);
+    else visao.push('Nenhuma nota ficou sem lançamento.');
+    if (d.pj?.ocultos) {
+      visao.push(`${numero(d.pj.ocultos)} nota(s) de prestadores PJ ficaram fora da conta${d.pj.nao_lancadas ? `, sendo ${numero(d.pj.nao_lancadas)} não lançadas (${brl(d.pj.valor)})` : ''}.`);
+    }
+    const divergentes = situacao('valor_divergente');
+    if (divergentes.qtd) {
+      visao.push(`${numero(divergentes.qtd)} nota(s) foram lançadas com valor que nenhuma alíquota de retenção explica — valem conferência.`);
+    }
+  }
+
+  const kpis = [
+    { rotulo: efd ? 'Documentos apontados' : 'Notas na planilha', valor: numero(d.lote.notas), detalhe: d.lote.competencia ? `competência ${d.lote.competencia}` : '', tom: 'neutro' },
+    { rotulo: 'NÃO estão no Senior', valor: numero(k.nao_lancadas), detalhe: brl(k.valor_nao_lancado), tom: k.nao_lancadas ? 'critico' : 'bom' },
+    { rotulo: efd ? 'Com nota de entrada' : 'Lançadas', valor: numero(lancadas.qtd), detalhe: brl(lancadas.valor), tom: 'bom' },
+  ];
+  if (efd) kpis.push({ rotulo: 'Só como emissão', valor: numero(situacao('so_saida').qtd), detalhe: 'venda sem entrada no grupo', tom: 'neutro' });
+  else {
+    kpis.push({ rotulo: 'Valor não bate', valor: numero(situacao('valor_divergente').qtd), detalhe: 'fora da faixa de retenção', tom: situacao('valor_divergente').qtd ? 'alerta' : 'bom' });
+    if (d.pj?.cadastrados) kpis.push({ rotulo: 'PJ fora da conta', valor: numero(d.pj.ocultos), detalhe: `${numero(d.pj.cadastrados)} prestadores na lista`, tom: 'neutro' });
+  }
+
+  const destaques = efd
+    ? d.notas.filter((n) => n.situacao === 'nao_lancada').slice(0, 5)
+      .map((n) => ({ rotulo: `${n.prestador ?? fmtCnpj(n.cnpj_prestador)} · nº ${n.numero}`, valor: brl(n.valor), tom: 'critico' }))
+    : (d.por_prestador ?? []).slice(0, 5)
+      .map((p) => ({ rotulo: p.rotulo, valor: `${numero(p.qtd)} · ${brl(p.valor)}`, tom: 'critico' }));
+
+  return {
+    titulo: efd ? 'Malha fina · documentos fora da EFD' : 'Malha fina · serviços tomados',
+    periodo: `${d.lote.arquivo}${d.lote.competencia ? ` · competência ${d.lote.competencia}` : ''}`,
+    kpis,
+    titulo_destaques: efd ? 'Documentos que não estão no Senior' : 'Prestadores com mais notas não lançadas',
+    destaques,
+    visao,
+    rodape: `Conferido contra as notas do Senior${d.lote.conferido_em ? ` em ${data(d.lote.conferido_em, true)}` : ''}`,
+  };
+}
 
 export default function MalhaFina() {
   const [params, setParams] = useSearchParams();
@@ -170,6 +229,7 @@ export default function MalhaFina() {
             <button className="btn pequeno" onClick={conferir} disabled={conferindo || !loteId}>
               {conferindo ? 'Conferindo no Senior…' : 'Atualizar conferência'}
             </button>
+            {d && <BotaoResumo resumo={() => resumoMalha(d)} />}
             {d?.lote?.conferido_em && <span className="muted pequeno">conferido em {data(d.lote.conferido_em, true)}</span>}
             <span className="espaco" />
             {loteId && <button className="btn pequeno ghost" onClick={() => apagar(loteId)}>Remover esta planilha</button>}

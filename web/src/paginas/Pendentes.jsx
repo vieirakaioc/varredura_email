@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
+import { BotaoResumo } from '../resumo.jsx';
 import { Topo, useAuth } from '../contexto.jsx';
 import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 import Lancamentos from './Lancamentos.jsx';
@@ -117,6 +118,62 @@ function ComAbas({ children }) {
   );
 }
 
+/**
+ * Sumário executivo da fila, para quem não vai abrir o sistema.
+ * As frases saem dos números: se a fila melhorar, o texto muda junto.
+ */
+function resumoPendentes(dados, f) {
+  const k = dados.indicadores;
+  const fl = dados.fluxo ?? {};
+  const periodo = dados.tudo_aberto ? 'Tudo em aberto, sem limite de data'
+    : dados.foco_mes ? `Competência ${data(dados.periodo.de)} a ${data(dados.periodo.ate)}`
+      : `Últimos ${f.dias} dias · ${data(dados.periodo.de)} a ${data(dados.periodo.ate)}`;
+  const situacao = { acumulando: 'está acumulando', reduzindo: 'está diminuindo', equilibrio: 'está estável' }[fl.situacao];
+  const visao = [];
+  if (situacao && fl.taxa_atendimento != null) {
+    visao.push(`A fila ${situacao}: de cada 100 notas que chegaram, ${numero(fl.taxa_atendimento)} foram lançadas `
+      + `(${numero(fl.lancadas)} de ${numero(fl.recebidas)} em ${fl.dias} dias), saldo de ${fl.saldo > 0 ? '+' : ''}${numero(fl.saldo)}.`);
+  }
+  if (fl.dias_para_zerar != null) {
+    visao.push(`No ritmo de ${numero(fl.ritmo_dia, 1)} notas por dia, a fila de ${numero(fl.fila)} seria zerada em ${numero(fl.dias_para_zerar, 1)} dia(s).`);
+  }
+  if (k.paradas_mais_5) visao.push(`${numero(k.paradas_mais_5)} nota(s) estão paradas há mais de 5 dias; a mais antiga espera há ${k.mais_antiga} dia(s).`);
+  if (fl.no_prazo != null) visao.push(`Das que foram lançadas, ${numero(fl.no_prazo)}% saíram em até 2 dias do recebimento.`);
+  if (k.canceladas_pendentes) visao.push(`Atenção: ${numero(k.canceladas_pendentes)} pendência(s) estão canceladas na SEFAZ e NÃO devem ser lançadas.`);
+  if (fl.tendencia === 'piorando') visao.push('A segunda metade do período acumulou mais que a primeira: a tendência é de piora.');
+  if (fl.tendencia === 'melhorando') visao.push('A segunda metade do período acumulou menos que a primeira: a tendência é de melhora.');
+
+  return {
+    titulo: 'Notas pendentes de lançamento',
+    periodo,
+    kpis: [
+      { rotulo: 'Pendentes de lançamento', valor: numero(k.pendentes), detalhe: brl(k.pendentes_valor), tom: 'critico' },
+      { rotulo: 'Paradas há mais de 5 dias', valor: numero(k.paradas_mais_5), detalhe: `mais antiga: ${k.mais_antiga} dia(s)`, tom: k.paradas_mais_5 ? 'alerta' : 'bom' },
+      {
+        rotulo: 'Taxa de atendimento', valor: fl.taxa_atendimento != null ? `${numero(fl.taxa_atendimento)}%` : '—',
+        detalhe: `${numero(fl.lancadas)} lançadas de ${numero(fl.recebidas)}`,
+        tom: fl.taxa_atendimento >= 100 ? 'bom' : fl.taxa_atendimento >= 95 ? 'alerta' : 'critico',
+      },
+      {
+        rotulo: 'Saldo do período', valor: `${fl.saldo > 0 ? '+' : ''}${numero(fl.saldo ?? 0)}`,
+        detalhe: fl.saldo > 0 ? 'entraram na fila' : 'saíram da fila', tom: fl.saldo > 0 ? 'critico' : 'bom',
+      },
+      { rotulo: 'Chegaram hoje', valor: numero(k.recebidas_hoje), detalhe: `${numero(k.pendentes_hoje)} ainda sem lançar`, tom: 'neutro' },
+      {
+        rotulo: 'Lançadas hoje', valor: numero(k.lancadas_hoje),
+        detalhe: `saldo do dia: ${k.recebidas_hoje - k.lancadas_hoje >= 0 ? '+' : ''}${numero(k.recebidas_hoje - k.lancadas_hoje)}`, tom: 'neutro',
+      },
+    ],
+    titulo_destaques: 'Empresas com mais pendências',
+    destaques: (dados.por_empresa ?? []).slice(0, 5).map((e) => ({
+      rotulo: `${e.chave !== '—' ? `${e.chave} ` : ''}${e.rotulo}`,
+      valor: `${numero(e.qtd)} · ${brl(e.valor)}`, tom: 'critico',
+    })),
+    visao,
+    rodape: 'Fonte: XMLs recebidos no Senior (Via Recebimento de Documento Eletrônico)',
+  };
+}
+
 function PainelPendentes() {
   useFiltrosLembrados('pendentes', ['aba']);
   const [params, setParams] = useSearchParams();
@@ -204,6 +261,7 @@ function PainelPendentes() {
             ))}
           </div>
           <button className="btn pequeno" onClick={recarregar}>Atualizar</button>
+          {dados && <BotaoResumo resumo={() => resumoPendentes(dados, f)} />}
           <span className="espaco" />
           <span className="muted pequeno">Fonte: Via Recebimento de Documento Eletrônico (Senior)</span>
         </div>

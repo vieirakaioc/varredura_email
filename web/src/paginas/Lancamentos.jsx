@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
+import { BotaoResumo } from '../resumo.jsx';
 import { useAuth } from '../contexto.jsx';
 import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 
@@ -82,6 +83,49 @@ const ROTULO_FILTRO = { categoria: 'Tipo de nota', equipe: 'Bloco', dia: 'Dia', 
 
 /** Cor da célula do mapa de calor conforme a intensidade. */
 const corCalor = (v, max) => (v === 0 ? 'var(--superficie-2)' : `color-mix(in srgb, var(--serie-1) ${Math.max(12, Math.round((v / max) * 100))}%, var(--superficie))`);
+
+/** Sumário executivo da produtividade do time, para mandar sem precisar abrir o sistema. */
+function resumoLancamentos(dados, f) {
+  const k = dados.indicadores;
+  const topo = (dados.pessoas ?? []).slice(0, 5);
+  const visao = [
+    `O time lançou ${numero(k.notas)} nota(s) no período (${brl(k.valor)}), média de ${numero(k.media_dia, 1)} por dia.`,
+  ];
+  if (k.melhor_dia) visao.push(`Melhor dia: ${data(k.melhor_dia.dia)}, com ${numero(k.melhor_dia.notas)} notas.`);
+  if (k.pico_hora) visao.push(`O pico do dia é às ${k.pico_hora.rotulo}, com ${numero(k.pico_hora.notas)} notas lançadas nessa faixa.`);
+  if (k.prazo_medio != null) {
+    visao.push(`Entre o XML chegar e a nota ser lançada passam ${numero(k.prazo_medio, 1)} dia(s) em média; `
+      + `${numero(k.no_mesmo_dia ?? 0)}% são lançadas no mesmo dia.`);
+  }
+  visao.push(`${numero(k.pct_com_xml)}% dos lançamentos partiram do XML recebido — o resto foi digitado sem XML na base.`);
+  if (topo.length) visao.push(`${numero(k.pessoas)} pessoa(s) lançaram no período; a mais produtiva fez ${numero(topo[0].notas)} notas.`);
+
+  return {
+    titulo: 'Produtividade do lançamento',
+    periodo: `${data(dados.periodo.de)} a ${data(dados.periodo.ate)} · por ${dados.base === 'entrada' ? 'data de entrada da nota' : 'data do lançamento'}`,
+    kpis: [
+      { rotulo: 'Notas lançadas', valor: numero(k.notas), detalhe: brl(k.valor), tom: 'neutro' },
+      { rotulo: 'Média por dia', valor: numero(k.media_dia, 1), detalhe: k.melhor_dia ? `melhor dia: ${numero(k.melhor_dia.notas)}` : '', tom: 'neutro' },
+      { rotulo: 'Equipe no período', valor: numero(k.pessoas), detalhe: `${numero(k.pessoas_hoje)} lançando hoje`, tom: 'neutro' },
+      { rotulo: 'Pico do dia', valor: k.pico_hora?.rotulo ?? '—', detalhe: `${numero(k.pico_hora?.notas ?? 0)} notas nessa hora`, tom: 'neutro' },
+      {
+        rotulo: 'Prazo médio do XML', valor: `${numero(k.prazo_medio ?? 0, 1)} dia(s)`,
+        detalhe: `${numero(k.no_mesmo_dia ?? 0)}% no mesmo dia`, tom: (k.prazo_medio ?? 0) <= 1 ? 'bom' : 'alerta',
+      },
+      {
+        rotulo: 'A partir do XML', valor: `${numero(k.pct_com_xml)}%`,
+        detalhe: 'o resto foi digitado sem XML', tom: k.pct_com_xml >= 80 ? 'bom' : 'alerta',
+      },
+    ],
+    titulo_destaques: 'Quem mais lançou',
+    destaques: topo.map((p, i) => ({
+      rotulo: `${i + 1}º ${p.usuario}`,
+      valor: `${numero(p.notas)} · ${numero(p.media_dia, 1)}/dia`, tom: 'neutro',
+    })),
+    visao,
+    rodape: `Fonte: notas de entrada do Senior${f.situacoes && f.situacoes !== 'todas' ? ' · filtrado por situação' : ''}`,
+  };
+}
 
 export default function Lancamentos() {
   useFiltrosLembrados('lancamentos', ['aba']);
@@ -178,6 +222,7 @@ export default function Lancamentos() {
             <option value="entrada">Data de entrada da nota</option>
           </select>
           <button className="btn pequeno" onClick={recarregar}>Atualizar</button>
+          {dados && <BotaoResumo resumo={() => resumoLancamentos(dados, f)} />}
         </div>
         <div className="linha pequeno" style={{ gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
           <strong className="muted">Situação no Senior:</strong>
