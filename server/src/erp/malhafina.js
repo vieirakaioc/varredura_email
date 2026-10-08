@@ -16,6 +16,7 @@ export const SITUACOES = {
   lancada: 'Lançada no Senior',
   so_saida: 'Emitida, sem entrada no grupo',
   nao_lancada: 'NÃO lançada',
+  conferir: 'Conferir: casamento duvidoso',
   valor_divergente: 'Valor não bate',
   cancelada_senior: 'Entrada cancelada no Senior',
   cancelada_prefeitura: 'Cancelada na prefeitura',
@@ -372,6 +373,41 @@ const SQL_ENTRADAS = `SELECT n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n
 
 const MARGEM_DIAS = 120;  // a nota pode ser lançada bem depois da competência
 
+// Espécies que claramente NÃO são nota de serviço. Casar uma NFS-e da planilha com uma dessas
+// quer dizer que o número bateu por coincidência, não que a nota foi lançada.
+const ESPECIE_DE_OUTRO_TIPO = /^(NFE|NF|CTE|CT|MDF|NFC|CUP|CF)$/i;
+// Entrada muito anterior à competência é número reaproveitado pelo prestador, não a nota da planilha
+const DIAS_ANTES_ACEITOS = 31;
+
+/**
+ * Por que este casamento pode não ser esta nota. Devolve null quando não há dúvida.
+ *
+ * O casamento é por CNPJ do prestador + número, que não é único: o mesmo prestador pode ter
+ * emitido notas de tipos diferentes com o mesmo número, para empresas diferentes do grupo ou em
+ * anos diferentes. Sem essa conferência, a tela diria "lançada" para nota que ninguém lançou.
+ */
+function duvidasDoCasamento(nota, achada, candidatas, mesmaEmpresa) {
+  const duvidas = [];
+  if (nota.cnpj_empresa && !mesmaEmpresa.length) {
+    duvidas.push(`a entrada está em ${String(achada.SIGFIL ?? '').trim() || 'outra empresa'}, e a planilha diz que o tomador é outro`);
+  }
+  const especie = String(achada.CODSNF ?? '').trim();
+  if (ESPECIE_DE_OUTRO_TIPO.test(especie)) duvidas.push(`a entrada foi lançada como ${especie}, que não é nota de serviço`);
+  const base = nota.competencia ?? nota.emissao;
+  const entrada = achada.DATENT ? new Date(achada.DATENT).toISOString().slice(0, 10) : null;
+  if (base && entrada) {
+    const dias = Math.round((new Date(entrada) - new Date(base)) / 86400000);
+    if (dias < -DIAS_ANTES_ACEITOS) duvidas.push(`a entrada é de ${entrada}, bem antes da competência ${base}`);
+  }
+  // Mais de uma entrada possível e elas não concordam: não dá para dizer qual é
+  const possiveis = (mesmaEmpresa.length ? mesmaEmpresa : candidatas).filter((l) => String(l.SITNFC).trim() !== '3');
+  if (possiveis.length > 1) {
+    const valores = new Set(possiveis.map((l) => Number(l.VLRLIQ ?? 0).toFixed(2)));
+    if (valores.size > 1) duvidas.push(`há ${possiveis.length} entradas com esse número e valores diferentes`);
+  }
+  return duvidas.length ? duvidas.join('; ') : null;
+}
+
 /**
  * Confere as notas do lote contra o Senior e grava o resultado.
  * O período consultado sai das próprias datas da planilha, com folga para lançamento atrasado.
@@ -420,20 +456,25 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
       let situacao;
       let diferenca = null;
       let retencao = null;
+      let alerta = null;
       if (!achada) situacao = nota.cancelada_na_prefeitura ? 'cancelada_prefeitura' : 'nao_lancada';
       else if (String(achada.SITNFC).trim() === '3') situacao = 'cancelada_senior';
       else {
+        // Antes de dizer "lançada", confere se a entrada encontrada é mesmo ESTA nota.
+        // Verde só sai quando os quatro critérios batem; na dúvida vai para "conferir",
+        // porque dar "ok" para quem não está lançado é o erro caro aqui.
+        alerta = duvidasDoCasamento(nota, achada, candidatas, mesmaEmpresa);
         const esperado = nota.valor ?? nota.valor_liquido;
         const lancado = achada.VLRLIQ != null ? Number(achada.VLRLIQ) : null;
         diferenca = esperado != null && lancado != null ? Math.round((esperado - lancado) * 100) / 100 : null;
         const explicacao = explicarDiferenca(esperado, lancado, nota.retencoes_planilha ?? 0);
         retencao = explicacao?.valor ? `${explicacao.nome} (${String(explicacao.pct).replace('.', ',')}%)` : null;
-        situacao = diferenca == null || explicacao ? 'lancada' : 'valor_divergente';
+        situacao = alerta ? 'conferir' : (diferenca == null || explicacao ? 'lancada' : 'valor_divergente');
       }
       resumo[situacao] = (resumo[situacao] ?? 0) + 1;
       run(`UPDATE malha_fina_notas SET situacao = ?, entrada_numero = ?, entrada_empresa = ?, entrada_data = ?,
              entrada_lancada_em = ?, entrada_valor = ?, entrada_usuario = ?, diferenca_valor = ?, retencao = ?,
-             entrada_empresa_chave = ?, conferido_em = ? WHERE id = ?`,
+             entrada_empresa_chave = ?, alerta = ?, conferido_em = ? WHERE id = ?`,
       [situacao,
         achada ? String(achada.NUMNFC) : null,
         achada ? (String(achada.SIGFIL ?? '').trim() || String(achada.NOMFIL ?? '').trim() || `${achada.CODEMP}/${achada.CODFIL}`) : null,
@@ -441,7 +482,7 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
         achada ? iso(achada.DATGER) : null,
         achada?.VLRLIQ != null ? Number(achada.VLRLIQ) : null,
         achada ? String(achada.NOMUSU ?? '').trim() || null : null,
-        diferenca, retencao, achada ? `${achada.CODEMP}/${achada.CODFIL}` : null, agora, nota.id]);
+        diferenca, retencao, achada ? `${achada.CODEMP}/${achada.CODFIL}` : null, alerta, agora, nota.id]);
     }
     run('UPDATE malha_fina_lotes SET conferido_em = ? WHERE id = ?', [agora, loteId]);
   });

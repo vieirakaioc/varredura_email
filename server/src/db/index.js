@@ -36,7 +36,8 @@ garantirColuna('dfe_controle', 'ultimo_aviso', 'TEXT'); // 656 da SEFAZ (janela 
 garantirColuna('malha_fina_notas', 'diferenca_valor', 'REAL');
 garantirColuna('malha_fina_notas', 'retencao', 'TEXT');              // alíquota que explica a diferença
 garantirColuna('malha_fina_notas', 'retencoes_planilha', 'REAL');
-garantirColuna('malha_fina_notas', 'entrada_empresa_chave', 'TEXT');  // codemp/codfil da filial que lançou
+garantirColuna('malha_fina_notas', 'entrada_empresa_chave', 'TEXT');
+garantirColuna('malha_fina_notas', 'alerta', 'TEXT');  // por que o casamento com o Senior é duvidoso  // codemp/codfil da filial que lançou
 // Segundo layout da contabilidade: relatório da EFD, com chave de acesso
 garantirColuna('malha_fina_lotes', 'tipo', "TEXT NOT NULL DEFAULT 'servicos_tomados'");
 garantirColuna('malha_fina_notas', 'serie', 'TEXT');

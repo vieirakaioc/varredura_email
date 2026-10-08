@@ -11,6 +11,7 @@ const CORES = {
   lancada: { cor: 'var(--status-bom)', fundo: 'color-mix(in srgb, var(--status-bom) 12%, transparent)', rotulo: 'Lançada' },
   nao_lancada: { cor: 'var(--status-critico)', fundo: 'color-mix(in srgb, var(--status-critico) 14%, transparent)', rotulo: 'NÃO lançada' },
   valor_divergente: { cor: 'var(--status-atencao)', fundo: 'color-mix(in srgb, var(--status-atencao) 14%, transparent)', rotulo: 'Valor não bate' },
+  conferir: { cor: '#b26a00', fundo: 'color-mix(in srgb, #b26a00 16%, transparent)', rotulo: 'CONFERIR' },
   so_saida: { cor: 'var(--serie-1)', fundo: 'color-mix(in srgb, var(--serie-1) 10%, transparent)', rotulo: 'Emitida, sem entrada' },
   cancelada_senior: { cor: 'var(--dup)', fundo: 'color-mix(in srgb, var(--dup) 12%, transparent)', rotulo: 'Entrada cancelada' },
   cancelada_prefeitura: { cor: 'var(--texto-fraco)', fundo: 'transparent', rotulo: 'Cancelada na prefeitura' },
@@ -37,6 +38,7 @@ const COLUNAS_EXPORTAR = [
   { titulo: 'Valor no Senior', tipo: 'moeda', valor: (n) => n.entrada_valor },
   { titulo: 'Diferença', tipo: 'moeda', valor: (n) => n.diferenca_valor },
   { titulo: 'Explicação da diferença', valor: (n) => n.retencao },
+  { titulo: 'Alerta do casamento', valor: (n) => n.alerta },
   { titulo: 'Retenções na planilha', tipo: 'moeda', valor: (n) => n.retencoes_planilha },
   { titulo: 'Linha na planilha', tipo: 'numero', valor: (n) => n.linha },
 ];
@@ -118,7 +120,7 @@ function resumoMalha(d) {
         tipo: 'barras', titulo: 'Resultado da conferência', sub: 'cada nota da planilha', largura_rotulo: 340,
         itens: d.por_situacao.map((s) => ({
           rotulo: s.rotulo, valor: s.qtd, detalhe: brl(s.valor),
-          cor: { lancada: '#1a7f4b', nao_lancada: '#c0392b', valor_divergente: '#d9a300', so_saida: '#2b6cb0' }[s.chave] ?? '#8d98a5',
+          cor: { lancada: '#1a7f4b', nao_lancada: '#c0392b', valor_divergente: '#d9a300', conferir: '#b26a00', so_saida: '#2b6cb0' }[s.chave] ?? '#8d98a5',
         })),
       },
       { tipo: 'lista', titulo: efd ? 'Documentos que não estão no Senior' : 'Prestadores com mais notas não lançadas', itens: destaques },
@@ -426,6 +428,7 @@ export default function MalhaFina() {
                             ? <>NF {n.entrada_numero}<div className="muted pequeno">
                               {n.entrada_empresa} · {data(n.entrada_data)}{n.entrada_usuario ? ` · ${n.entrada_usuario}` : ''}</div></>
                             : <span className="muted">—</span>}
+                          {n.alerta && <div className="pequeno" style={{ color: CORES.conferir.cor, fontWeight: 600 }}>⚠ {n.alerta}</div>}
                         </td>
                         <td className="num">
                           {n.entrada_valor != null ? brl(n.entrada_valor) : '—'}
@@ -458,7 +461,10 @@ export default function MalhaFina() {
           <p className="muted pequeno">
             Como a conferência é feita: cada linha da planilha é procurada nas notas de entrada do Senior pelo
             <strong> CNPJ do prestador + número da nota</strong>, preferindo a entrada da mesma empresa tomadora. O Senior guarda o
-            valor líquido (já com ISS, IRRF, INSS e CSRF retidos) e a planilha traz o bruto. A diferença só é aceita quando bate
+            <strong>“Lançada” só aparece quando quatro coisas batem</strong>: a entrada é da mesma empresa que a planilha aponta como
+            tomador, foi lançada como nota de serviço (e não como NF-e ou CT-e com o mesmo número), tem data compatível com a
+            competência, e não há duas entradas com esse número e valores diferentes. Falhando qualquer uma, a nota vai para
+            <strong> CONFERIR</strong> com o motivo escrito — nunca para “lançada”. O Senior guarda o
             com uma alíquota de retenção de verdade — IRRF 1,5%, CSRF 4,65%, ISS, INSS 11% e suas somas, com folga de centavos.
             O que nenhuma alíquota explica fica marcado como <strong>valor não bate</strong>, porque aí não é retenção: é lançamento
             com valor diferente do documento.
