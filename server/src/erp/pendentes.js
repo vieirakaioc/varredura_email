@@ -4,6 +4,7 @@
 // "Pendente" = o XML está no recebimento e não existe entrada com a mesma chave de acesso.
 // Cancelamentos conhecidos (SEFAZ / saída do Senior) são destacados: não devem ser lançados.
 import { all, get, getConfig, run } from '../db/index.js';
+import { log } from '../util/log.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { comCache, versaoSql } from './cache.js';
 import { CATEGORIAS, categoriaDe, colunasItem, regraBiomassa, sqlMarcasItem } from './categorias.js';
@@ -174,10 +175,47 @@ function montarItem(l, canceladas, dia) {
     categoria: categoriaDe({ chave, especie: l.CODSNF, biomassa: Number(l.BIOMASSA) === 1, combustivel: Number(l.COMBUSTIVEL) === 1, temProduto: Number(l.TEM_PRODUTO) === 1, temServico: Number(l.TEM_SERVICO) === 1 }),
   };
 }
-function montarItemClassificado(l, canceladas, dia) {
-  const i = montarItem(l, canceladas, dia);
+// ------------------------------------------------------------------ NFS-e da contabilidade
+// Nota de serviço municipal não chega ao recebimento de XML do Senior, então ela não existe na
+// consulta acima. Quando há planilha da contabilidade importada, as não lançadas entram na fila
+// por aqui — senão a tela mostraria só o que veio por XML e diria que a fila está menor do que é.
+const SQL_FILIAIS = 'SELECT NUMCGC, CODEMP, CODFIL, SIGFIL, NOMFIL, SIGUFS FROM E070FIL';
+
+function itemNfse(n, filiais, dia) {
+  const f = filiais.get(String(n.cnpj_empresa ?? '')) ?? null;
+  const recebido = n.competencia ?? n.emissao;
+  return {
+    chave: `NFSE-${n.cnpj_prestador}-${n.numero}`,
+    numero: n.numero, especie: 'NFS', especie_rotulo: 'NFS-e', tipo: 'Entrada',
+    emissao: n.emissao ?? n.competencia, recebido_em: recebido,
+    valor: n.valor ?? n.valor_liquido ?? null,
+    cnpj_fornecedor: n.cnpj_prestador, fornecedor: n.prestador,
+    codemp: f?.CODEMP ?? null, codfil: f?.CODFIL ?? null,
+    cnpj_destinatario: n.cnpj_empresa,
+    empresa: (f && (String(f.SIGFIL ?? '').trim() || String(f.NOMFIL ?? '').trim())) || n.empresa || 'Empresa não identificada',
+    empresa_do_grupo: Boolean(f),
+    uf: f ? String(f.SIGUFS ?? '').trim() || null : null,
+    lancada: false, entrada: null,
+    nossa_saida: false, entrada_propria: false, transferencia: false, tipo_movimento: 'entrada',
+    // A planilha não diz nada sobre cadastro nem itens; marcar como faltando viraria "incompleta"
+    // sem base, então essas notas entram direto como pendentes de lançamento.
+    fornecedor_cadastrado: true, tem_itens: true,
+    dias_parada: recebido ? Math.max(0, diasEntre(recebido, dia)) : null,
+    cancelada: Boolean(n.cancelada_na_prefeitura), cancelada_em: null, justificativa_cancelamento: null,
+    observacao: null, produto: null, responsavel: 'fiscal', categoria: 'servico',
+    origem: 'contabilidade', municipio: n.municipio_prestador ?? null,
+    planilha: n.arquivo ?? null, linha_planilha: n.linha ?? null,
+  };
+}
+
+/** Acrescenta situação e rótulos a um item já montado. */
+function classificado(i) {
   const situacao = classificar(i);
   return { ...i, situacao, situacao_rotulo: SITUACOES[situacao], categoria_rotulo: CATEGORIAS[i.categoria] ?? i.categoria };
+}
+
+function montarItemClassificado(l, canceladas, dia) {
+  return classificado(montarItem(l, canceladas, dia));
 }
 
 /**
@@ -235,11 +273,32 @@ export async function painelPendentes(filtros = {}) {
   // Motivos informados pela equipe (gravados no Validador, fora do Senior)
   const motivos = new Map(all(`SELECT m.chave, m.motivo, m.observacao, m.atualizado_em, u.nome AS usuario
     FROM pendencia_motivos m LEFT JOIN usuarios u ON u.id = m.usuario_id`).map((m) => [m.chave, m]));
-  let itens = linhas.map((l) => {
-    const i = montarItemClassificado(l, canceladas, dia);
+  const comMotivo = (i) => {
     const m = motivos.get(i.chave);
     return m ? { ...i, motivo: m.motivo, motivo_rotulo: MOTIVOS[m.motivo] ?? m.motivo, motivo_obs: m.observacao, motivo_por: m.usuario, motivo_em: m.atualizado_em } : i;
-  });
+  };
+  let itens = linhas.map((l) => comMotivo({ ...montarItemClassificado(l, canceladas, dia), origem: 'senior' }));
+
+  // NFS-e da planilha da contabilidade: entram na mesma fila, porque nota de serviço municipal
+  // não passa pelo recebimento de XML do Senior e não apareceria em lugar nenhum.
+  const periodoNfse = mes
+    ? { de: `${mes}-01`, ate: ultimoDia }
+    : { de: de.toISOString().slice(0, 10), ate: ate.toISOString().slice(0, 10) };
+  let nfse = [];
+  if (filtros.incluir_nfse !== '0') {
+    try {
+      const { nfseNaoLancadas } = await import('./malhafina.js');
+      const { notas } = nfseNaoLancadas(tudoAberto ? {} : periodoNfse);
+      if (notas.length) {
+        const filiais = new Map((await comCache(`filiais|${versaoSql(SQL_FILIAIS)}`, filtros.forcar === '1' ? 0 : 3600_000,
+          () => consultar(SQL_FILIAIS, null))).map((f) => [String(f.NUMCGC ?? '').replace(/\D/g, '').padStart(14, '0'), f]));
+        nfse = notas.map((n) => comMotivo(classificado(itemNfse(n, filiais, dia))));
+      }
+    } catch (e) {
+      log('alerta', 'pendentes', `NFS-e da contabilidade não entraram na fila: ${e.message}`);
+    }
+  }
+  itens = [...itens, ...nfse];
 
   // Mês escolhido: a tela inteira olha só aquele mês. O corte é feito aqui, e não no WHERE, porque
   // tirar de lá a cláusula das notas em aberto faz o SQL Server trocar de plano e a consulta de um
@@ -396,6 +455,13 @@ export async function painelPendentes(filtros = {}) {
       total: itens.length,
       fora_do_grupo: foraDoGrupo,        // XMLs de terceiros na base do Senior
       nossas_saidas: nossasSaidas,       // documentos que nós emitimos (não são entrada)
+    },
+    // De onde veio cada pendência: XML no Senior ou planilha da contabilidade (NFS-e)
+    origens: {
+      senior: pendentes.filter((i) => i.origem !== 'contabilidade').length,
+      contabilidade: pendentes.filter((i) => i.origem === 'contabilidade').length,
+      contabilidade_valor: soma(pendentes.filter((i) => i.origem === 'contabilidade'), (i) => i.valor),
+      disponiveis: nfse.length, incluidas: filtros.incluir_nfse !== '0',
     },
     por_situacao: porSituacao,
     por_categoria: porCategoria, categorias: CATEGORIAS,

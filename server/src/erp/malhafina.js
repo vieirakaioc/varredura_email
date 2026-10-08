@@ -494,6 +494,33 @@ export function removerPj(cnpj) {
   return { ok: true };
 }
 
+/**
+ * NFS-e da contabilidade que ainda não foram lançadas.
+ *
+ * NFS-e municipal não chega ao recebimento de XML do Senior (conferido: das 577 notas da planilha,
+ * só 20 aparecem lá). Sem isso, nota de serviço não lançada não aparece em nenhum acompanhamento —
+ * é o painel de pendências que precisa somá-las.
+ *
+ * Quando a mesma nota aparece em mais de uma planilha, vale a mais recente: se ela foi lançada
+ * depois, deixa de ser pendência.
+ */
+export function nfseNaoLancadas({ de, ate } = {}) {
+  const pj = new Set(listarPj().map((p) => p.cnpj));
+  const porNota = new Map();
+  for (const n of all(`SELECT n.*, l.id AS lote, l.arquivo, l.competencia AS lote_competencia
+      FROM malha_fina_notas n JOIN malha_fina_lotes l ON l.id = n.lote_id
+      WHERE l.tipo = 'servicos_tomados' ORDER BY l.id`)) {
+    porNota.set(`${n.cnpj_prestador}|${n.numero}`, n);   // a última planilha sobrescreve
+  }
+  const notas = [...porNota.values()]
+    .filter((n) => n.situacao === 'nao_lancada' && !pj.has(n.cnpj_prestador))
+    .filter((n) => {
+      const d = n.competencia ?? n.emissao;
+      return !d || ((!de || d >= de) && (!ate || d <= ate));
+    });
+  return { notas, lotes: [...new Set(notas.map((n) => n.arquivo))] };
+}
+
 /** Lotes importados, com o placar de cada um. */
 export function listarLotes() {
   return all(`SELECT l.*, u.nome AS usuario,

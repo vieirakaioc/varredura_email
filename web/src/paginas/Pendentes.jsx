@@ -219,7 +219,7 @@ function PainelPendentes() {
     responsavel: params.get('responsavel') ?? 'fiscal',
     motivo: params.get('motivo') ?? '', categoria: params.get('categoria') ?? '',
     situacoes: params.get('situacoes') ?? 'pendente,inconsistente,incompleta',
-    sem_empresas: params.get('sem_empresas') ?? '',
+    sem_empresas: params.get('sem_empresas') ?? '', incluir_nfse: params.get('incluir_nfse') ?? '',
   };
   const empresasExcluidas = f.sem_empresas.split(',').filter(Boolean);
   const alternarEmpresa = (chave) => {
@@ -242,8 +242,8 @@ function PainelPendentes() {
   const { permissoes } = useAuth();
   const podeMotivo = permissoes.includes('decidir');
   const { dados, erro, carregando, recarregar, atualizar, trocando } = useDados(
-    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel, motivo: f.motivo, categoria: f.categoria })}`),
-    [f.mes, f.dias, f.tipo, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel, f.motivo, f.categoria], { automatico: false, memoria: 'pendentes' },
+    ({ forcar } = {}) => api.get(`/pendentes-lancamento${qs({ forcar: forcar ? '1' : '', mes: f.mes, dias: f.mes ? '' : f.dias, tipo: f.tipo, incluir_nfse: f.incluir_nfse, situacoes: f.situacoes, empresa: f.empresa, sem_empresas: f.sem_empresas, especie: f.especie, fornecedor: f.fornecedor, incluir_terceiros: f.incluir_terceiros, responsavel: f.responsavel, motivo: f.motivo, categoria: f.categoria })}`),
+    [f.mes, f.dias, f.tipo, f.incluir_nfse, f.situacoes, f.empresa, f.sem_empresas, f.especie, f.fornecedor, f.incluir_terceiros, f.responsavel, f.motivo, f.categoria], { automatico: false, memoria: 'pendentes' },
   );
   const k = dados?.indicadores;
   const itens = (dados?.itens ?? []).filter((l) => {
@@ -353,6 +353,18 @@ function PainelPendentes() {
                   ? <>Fonte: <strong>somente</strong> os XMLs recebidos ou emitidos entre {data(dados.periodo.de)} e {data(dados.periodo.ate)} — a tela inteira está focada no mês. Para ver pendências de outros meses, troque para “Por período (dias)” ou “Tudo em aberto”. </>
                   : <>Fonte: XMLs recebidos no Senior entre {data(dados.periodo.de)} e {data(dados.periodo.ate)}, mais <strong>todos os ainda não lançados</strong> dos últimos 12 meses (para mais antigos, use “Tudo em aberto”). </>}
               Fora da conta: {numero(k.fora_do_grupo)} XML(s) entre terceiros e {numero(k.nossas_saidas)} documento(s) emitido(s) pelo próprio grupo.
+              {dados.origens?.disponiveis > 0 && (
+                <>
+                  {' '}<label className="linha" style={{ gap: 5, display: 'inline-flex', verticalAlign: 'middle' }}
+                    title="NFS-e municipal não chega ao recebimento de XML do Senior; ela vem da planilha da contabilidade importada na aba Malha fina">
+                    <input type="checkbox" checked={dados.origens.incluidas} onChange={() => setFiltro('incluir_nfse', dados.origens.incluidas ? '0' : '')} />
+                    Somar as NFS-e da contabilidade
+                  </label>
+                  {dados.origens.incluidas
+                    ? <> — <strong>{numero(dados.origens.contabilidade)}</strong> nota(s) de serviço ({brl(dados.origens.contabilidade_valor)}) estão incluídas nos números acima, junto com {numero(dados.origens.senior)} vinda(s) do XML.</>
+                    : <> — {numero(dados.origens.disponiveis)} nota(s) de serviço estão <strong>fora</strong> dos números acima.</>}
+                </>
+              )}
             </div>
 
             {(f.empresa || f.especie || f.faixa || f.fornecedor || f.motivo || f.categoria) && (
@@ -565,7 +577,12 @@ function PainelPendentes() {
                           </span>
                         </td>
                         <td className="nowrap muted col-larga">{data(l.recebido_em)}</td>
-                        <td className="nowrap" title={`emitida em ${data(l.emissao)}`}><span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong></td>
+                        <td className="nowrap" title={l.origem === 'contabilidade'
+                          ? `emitida em ${data(l.emissao)} · veio da planilha da contabilidade${l.planilha ? ` (${l.planilha}, linha ${l.linha_planilha})` : ''}`
+                          : `emitida em ${data(l.emissao)}`}>
+                          <span className="tag azul">{l.especie_rotulo}</span> <strong>{l.numero}</strong>
+                          {l.origem === 'contabilidade' && <span className="tag" style={{ marginLeft: 4 }}>planilha</span>}
+                        </td>
                         <td style={{ maxWidth: 170 }} title={l.produto ?? ''}>
                           <div className="truncar">{l.produto ?? <span className="muted">—</span>}</div>
                           <div className="muted pequeno" style={{ color: COR_CATEGORIA[l.categoria] }}>{dados.categorias?.[l.categoria]}</div>
