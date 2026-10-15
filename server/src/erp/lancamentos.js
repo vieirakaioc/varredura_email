@@ -134,6 +134,46 @@ const iso = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v ? Strin
 const horaDe = (h) => (h == null ? null : Math.min(23, Math.floor(Number(h) / 60)));  // minutos do dia -> hora
 const minutoDe = (h) => (h == null ? null : Math.round(Number(h) % 60));
 const media = (lista) => (lista.length ? lista.reduce((s, x) => s + x, 0) / lista.length : null);
+const mediana = (lista) => {
+  if (!lista.length) return null;
+  const o = [...lista].sort((a, b) => a - b);
+  const meio = Math.floor(o.length / 2);
+  return o.length % 2 ? o[meio] : (o[meio - 1] + o[meio]) / 2;
+};
+// Intervalo em minutos entre lançamentos sem pausa: acima disso é almoço, reunião, outro trabalho
+const PAUSA_MIN = 45;
+
+/**
+ * Tempo que cada tipo de nota realmente consome, medido pelo relógio do Senior: para cada nota,
+ * o intervalo até o lançamento anterior da mesma pessoa no mesmo dia.
+ *
+ * É a única medida de produtividade por tipo que não depende de premissa — a meta por capacidade
+ * distribui tempo presumido e não sabe diferenciar um CT-e de uma nota com 50 itens.
+ * A primeira nota do dia e os intervalos acima de 45 minutos ficam de fora: não dá para saber
+ * quanto daquele tempo foi lançamento.
+ */
+function tempoEntreLancamentos(itens) {
+  const porPessoaDia = new Map();
+  for (const i of itens) {
+    if (i.hora == null) continue;
+    const k = `${i.usuario}|${i.dia}`;
+    if (!porPessoaDia.has(k)) porPessoaDia.set(k, []);
+    porPessoaDia.get(k).push(i);
+  }
+  const porCategoria = new Map();
+  for (const lista of porPessoaDia.values()) {
+    const ordenada = [...lista].sort((a, b) => (a.hora * 60 + (a.minuto ?? 0)) - (b.hora * 60 + (b.minuto ?? 0)));
+    for (let n = 1; n < ordenada.length; n += 1) {
+      const atual = ordenada[n];
+      const anterior = ordenada[n - 1];
+      const gap = (atual.hora * 60 + (atual.minuto ?? 0)) - (anterior.hora * 60 + (anterior.minuto ?? 0));
+      if (gap <= 0 || gap > PAUSA_MIN) continue;
+      if (!porCategoria.has(atual.categoria)) porCategoria.set(atual.categoria, []);
+      porCategoria.get(atual.categoria).push(gap);
+    }
+  }
+  return porCategoria;
+}
 const soma = (lista, f) => Math.round(lista.reduce((s, x) => s + (f(x) ?? 0), 0) * 100) / 100;
 
 /**
@@ -283,9 +323,22 @@ export async function painelLancamentos(filtros = {}) {
   const paraOrigem = semFiltro('origem');
   // Lançadas por tipo de nota (ignora o próprio filtro, para o gráfico mostrar todos os tipos)
   const paraCategoria = semFiltro('categoria');
+  const tempos = tempoEntreLancamentos(paraCategoria);
+  const tempoTotal = [...tempos.values()].reduce((s, l) => s + l.reduce((t, v) => t + v, 0), 0);
   const porCategoria = Object.entries(CATEGORIAS).map(([chave, rotulo]) => {
     const lista = paraCategoria.filter((i) => i.categoria === chave);
-    return { chave, rotulo, notas: lista.length, valor: soma(lista, (i) => i.valor) };
+    const gaps = tempos.get(chave) ?? [];
+    const minutos = gaps.reduce((s, v) => s + v, 0);
+    const pessoasDias = new Set(lista.map((i) => `${i.usuario}|${i.dia}`)).size;
+    return {
+      chave, rotulo, notas: lista.length, valor: soma(lista, (i) => i.valor),
+      // Tempo medido: intervalo até o lançamento anterior da mesma pessoa no mesmo dia
+      minutos_por_nota: gaps.length ? Math.round(mediana(gaps) * 10) / 10 : null,
+      medidas: gaps.length,
+      pct_tempo: tempoTotal ? Math.round((minutos / tempoTotal) * 100) : null,
+      pct_notas: paraCategoria.length ? Math.round((lista.length / paraCategoria.length) * 100) : null,
+      por_pessoa_dia: pessoasDias ? Math.round((lista.length / pessoasDias) * 10) / 10 : null,
+    };
   }).filter((c) => c.notas > 0).sort((a, b) => b.notas - a.notas);
   const porOrigem = [
     { chave: 'xml', rotulo: 'A partir do XML recebido', notas: paraOrigem.filter((i) => i.com_xml).length },

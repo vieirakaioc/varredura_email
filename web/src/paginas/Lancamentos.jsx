@@ -454,25 +454,54 @@ export default function Lancamentos() {
             </Cartao>
 
             <div className="coluna">
-              <Cartao titulo="Lançadas por tipo de nota" sub="clique para filtrar" semPadding
-                acoes={<BotaoExportar titulo="Lançadas por tipo de nota" linhas={dados.por_categoria ?? []} rotulo="Excel"
-                  colunas={[{ titulo: 'Tipo de nota', valor: (x) => x.rotulo }, { titulo: 'Notas', tipo: 'numero', valor: (x) => x.notas }, { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor }]} />}>
-                <ResponsiveContainer width="100%" height={Math.max(120, (dados.por_categoria ?? []).length * 30 + 16)}>
-                  <BarChart data={dados.por_categoria ?? []} layout="vertical" margin={{ left: 8, right: 56, top: 8, bottom: 4 }}>
-                    <XAxis type="number" hide />
-                    <YAxis type="category" dataKey="rotulo" tick={eixo} axisLine={false} tickLine={false} width={130} />
-                    <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (
-                      <div className="tooltip-grafico"><div className="t">{payload[0].payload.rotulo}</div>
-                        <div><strong>{numero(payload[0].payload.notas)}</strong> nota(s) · {brl(payload[0].payload.valor)}</div>
-                        <div className="muted pequeno">Clique para filtrar</div></div>
-                    ) : null)} />
-                    <Bar isAnimationActive={false} dataKey="notas" radius={[0, 4, 4, 0]} maxBarSize={18} style={{ cursor: 'pointer' }}
-                      onClick={(e) => alternar('categoria', (e.payload ?? e).chave)}>
-                      {(dados.por_categoria ?? []).map((x) => <Cell key={x.chave} fill={COR_CATEGORIA[x.chave] ?? 'var(--serie-1)'} fillOpacity={!f.categoria || f.categoria === x.chave ? 1 : 0.3} />)}
-                      <LabelList dataKey="notas" position="right" style={rotulo} formatter={(v) => numero(v)} />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+              <Cartao titulo="Produtividade por tipo de nota" sub="clique na linha para filtrar" semPadding
+                acoes={<BotaoExportar titulo="Produtividade por tipo de nota" linhas={dados.por_categoria ?? []} rotulo="Excel"
+                  colunas={[
+                    { titulo: 'Tipo de nota', valor: (x) => x.rotulo },
+                    { titulo: 'Notas', tipo: 'numero', valor: (x) => x.notas },
+                    { titulo: '% das notas', tipo: 'numero', valor: (x) => x.pct_notas },
+                    { titulo: 'Min/nota (medido)', tipo: 'numero', valor: (x) => x.minutos_por_nota },
+                    { titulo: 'Intervalos medidos', tipo: 'numero', valor: (x) => x.medidas },
+                    { titulo: '% do tempo', tipo: 'numero', valor: (x) => x.pct_tempo },
+                    { titulo: 'Notas por pessoa/dia', tipo: 'numero', valor: (x) => x.por_pessoa_dia },
+                    { titulo: 'Valor', tipo: 'moeda', valor: (x) => x.valor },
+                  ]} />}>
+                <div className="tabela-wrap">
+                  <table className="tabela">
+                    <thead>
+                      <tr>
+                        <th>Tipo de nota</th><th className="num">Notas</th><th className="num">%</th>
+                        <th className="num" title="Mediana do intervalo até o lançamento anterior da mesma pessoa no mesmo dia">Min/nota</th>
+                        <th className="num" title="Quanto do tempo de lançamento esse tipo consome">% do tempo</th>
+                        <th className="num" title="Notas desse tipo por pessoa, nos dias em que ela lançou">Por pessoa/dia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dados.por_categoria ?? []).map((x) => (
+                        <tr key={x.chave} className="clicavel" onClick={() => alternar('categoria', x.chave)}
+                          style={{ opacity: !f.categoria || f.categoria === x.chave ? 1 : 0.45 }}>
+                          <td>
+                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, marginRight: 7, background: COR_CATEGORIA[x.chave] ?? 'var(--serie-1)' }} />
+                            {x.rotulo}
+                            <div className="muted pequeno">{brl(x.valor)}</div>
+                          </td>
+                          <td className="num"><strong>{numero(x.notas)}</strong></td>
+                          <td className="num muted">{x.pct_notas}%</td>
+                          <td className="num">{x.minutos_por_nota != null ? <strong>{numero(x.minutos_por_nota, 1)}</strong> : <span className="muted">—</span>}
+                            <div className="muted pequeno">{numero(x.medidas)} medidas</div>
+                          </td>
+                          <td className="num">{x.pct_tempo != null ? `${x.pct_tempo}%` : '—'}</td>
+                          <td className="num">{numero(x.por_pessoa_dia ?? 0, 1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="muted pequeno" style={{ padding: '8px 12px', marginBottom: 0 }}>
+                  <strong>Min/nota é medido, não estimado</strong>: para cada nota, o intervalo até o lançamento anterior da mesma pessoa
+                  no mesmo dia (mediana). A primeira nota do dia e os intervalos acima de 45 minutos ficam de fora — ali não dá para
+                  saber quanto do tempo foi lançamento.
+                </p>
               </Cartao>
               <Cartao titulo="Por empresa" sub="notas lançadas" semPadding>
                 <div style={{ padding: 12 }}>
@@ -604,7 +633,6 @@ function HistoricoMensal() {
   const m = dados.media_meses_completos;
   const par = dados.parametros;
   return (
-    <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)', alignItems: 'start' }}>
     <Cartao titulo="Histórico mensal do time × meta" sub={`últimos 12 meses · pela data do lançamento · meta atual ${dados.calculo}`}>
       {m.meses > 0 && (
         <div className="aviso" style={{ marginBottom: 12 }}>
@@ -664,56 +692,10 @@ function HistoricoMensal() {
         Min/nota real = tempo produtivo nos dias em que cada um lançou ÷ notas do time. Passe o mouse em “Pessoas” para ver quem entrou na conta.
       </p>
     </Cartao>
-    <PorTipoDeNota por={dados.por_tipo} />
-    </div>
   );
 }
 
-/**
- * Mix de tipos de nota: média dos meses fechados contra o mês corrente.
- * O mês corrente é comparado com a fatia proporcional da média (pelos dias úteis já corridos),
- * senão ele apareceria sempre abaixo só por estar pela metade.
- */
-function PorTipoDeNota({ por }) {
-  if (!por?.itens?.length) return null;
-  const dados = por.itens.map((i) => ({
-    ...i, esperado: Math.round(i.media * por.proporcao_do_mes),
-    rotulo: i.rotulo.replace(' (posto)', '').replace(' (CT-e)', ''),
-  }));
-  const pct = Math.round(por.proporcao_do_mes * 100);
-  return (
-    <Cartao titulo="Por tipo de nota" sub={`média de ${por.meses} meses fechados × ${mesCurto(por.mes_atual)}${por.parcial ? ` (${pct}% do mês)` : ''}`}>
-      <ResponsiveContainer width="100%" height={240}>
-        <BarChart data={dados} layout="vertical" margin={{ left: 8, right: 44, top: 6 }} barCategoryGap="22%">
-          <CartesianGrid horizontal={false} stroke="var(--grade)" />
-          <XAxis type="number" tick={eixo} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="rotulo" tick={eixo} axisLine={false} tickLine={false} width={104} />
-          <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (() => {
-            const x = payload[0].payload;
-            const dif = x.atual - x.esperado;
-            return (
-              <div className="tooltip-grafico">
-                <div className="t">{x.rotulo}</div>
-                <div>Média dos meses fechados: <strong>{numero(x.media, 1)}</strong>/mês</div>
-                <div>{mesCurto(por.mes_atual)}: <strong>{numero(x.atual)}</strong>{por.parcial ? ` (esperado até aqui: ${numero(x.esperado)})` : ''}</div>
-                {por.parcial && <div className="muted pequeno">{dif >= 0 ? `+${numero(dif)}` : numero(dif)} em relação ao ritmo dos outros meses</div>}
-              </div>
-            );
-          })() : null)} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar isAnimationActive={false} dataKey="media" name={`Média de ${por.meses} meses`} fill="var(--texto-3)" fillOpacity={0.45} radius={[0, 4, 4, 0]} maxBarSize={16} />
-          <Bar isAnimationActive={false} dataKey="atual" name={mesCurto(por.mes_atual)} fill="var(--serie-1)" radius={[0, 4, 4, 0]} maxBarSize={16}>
-            <LabelList dataKey="atual" position="right" style={rotulo} formatter={(v) => (v ? numero(v) : '')} />
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <p className="muted pequeno" style={{ marginBottom: 0 }}>
-        Só o que o time de Escrita Fiscal lançou (sem integração e sem supervisão).
-        {por.parcial && ` ${mesCurto(por.mes_atual)} está em ${pct}% dos dias úteis: compare com a fatia proporcional da média, no tooltip.`}
-      </p>
-    </Cartao>
-  );
-}
+
 
 const DIAS = [[1, 'S'], [2, 'T'], [3, 'Q'], [4, 'Q'], [5, 'S'], [6, 'S']];
 const NOME_DIA = { 1: 'segunda', 2: 'terça', 3: 'quarta', 4: 'quinta', 5: 'sexta', 6: 'sábado' };
