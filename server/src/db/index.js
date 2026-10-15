@@ -37,7 +37,12 @@ garantirColuna('malha_fina_notas', 'diferenca_valor', 'REAL');
 garantirColuna('malha_fina_notas', 'retencao', 'TEXT');              // alíquota que explica a diferença
 garantirColuna('malha_fina_notas', 'retencoes_planilha', 'REAL');
 garantirColuna('malha_fina_notas', 'entrada_empresa_chave', 'TEXT');
-garantirColuna('malha_fina_notas', 'alerta', 'TEXT');  // por que o casamento com o Senior é duvidoso  // codemp/codfil da filial que lançou
+garantirColuna('malha_fina_notas', 'alerta', 'TEXT');
+// Exceção: quem resolve fora do time, até quando, e o retorno quando chega
+garantirColuna('pendencia_motivos', 'responsavel', 'TEXT');
+garantirColuna('pendencia_motivos', 'prazo', 'TEXT');
+garantirColuna('pendencia_motivos', 'retorno_em', 'TEXT');
+garantirColuna('pendencia_motivos', 'retorno_obs', 'TEXT');  // por que o casamento com o Senior é duvidoso  // codemp/codfil da filial que lançou
 // Segundo layout da contabilidade: relatório da EFD, com chave de acesso
 garantirColuna('malha_fina_lotes', 'tipo', "TEXT NOT NULL DEFAULT 'servicos_tomados'");
 garantirColuna('malha_fina_notas', 'serie', 'TEXT');

@@ -75,15 +75,81 @@ export const MOTIVOS = {
 };
 
 /** Grava (ou apaga, com motivo vazio) o motivo de um XML não ter sido lançado. */
-export function salvarMotivo({ chave, motivo, observacao }, usuarioId) {
+export function salvarMotivo({ chave, motivo, observacao, responsavel, prazo, retorno_obs: retornoObs, responder }, usuarioId) {
   const k = String(chave ?? '').replace(/\D/g, '');
   if (k.length !== 44) throw Object.assign(new Error('Chave de acesso inválida'), { status: 400, expose: true });
   if (!motivo) { run('DELETE FROM pendencia_motivos WHERE chave = ?', [k]); return null; }
   if (!MOTIVOS[motivo]) throw Object.assign(new Error('Motivo desconhecido'), { status: 400, expose: true });
-  run(`INSERT INTO pendencia_motivos (chave, motivo, observacao, usuario_id, atualizado_em) VALUES (?, ?, ?, ?, datetime('now','localtime'))
-    ON CONFLICT(chave) DO UPDATE SET motivo = excluded.motivo, observacao = excluded.observacao, usuario_id = excluded.usuario_id, atualizado_em = excluded.atualizado_em`,
-  [k, motivo, String(observacao ?? '').trim() || null, usuarioId ?? null]);
+  const data = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null);
+  // `responder` marca que a área externa devolveu: para o relógio da cobrança sem fechar a pendência
+  const retorno = responder ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null;
+  run(`INSERT INTO pendencia_motivos (chave, motivo, observacao, responsavel, prazo, retorno_em, retorno_obs, usuario_id, atualizado_em)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+    ON CONFLICT(chave) DO UPDATE SET motivo = excluded.motivo, observacao = excluded.observacao,
+      responsavel = excluded.responsavel, prazo = excluded.prazo,
+      retorno_em = COALESCE(excluded.retorno_em, pendencia_motivos.retorno_em),
+      retorno_obs = COALESCE(excluded.retorno_obs, pendencia_motivos.retorno_obs),
+      usuario_id = excluded.usuario_id, atualizado_em = excluded.atualizado_em`,
+  [k, motivo, String(observacao ?? '').trim() || null, String(responsavel ?? '').trim() || null,
+    data(prazo), retorno, String(retornoObs ?? '').trim() || null, usuarioId ?? null]);
   return get('SELECT * FROM pendencia_motivos WHERE chave = ?', [k]);
+}
+
+/**
+ * Exceções: pendências que saíram da mão do time e dependem de alguém de fora.
+ *
+ * O prazo é de retorno de quem precisa resolver, não de lançamento. Sem retorno dentro do prazo
+ * a exceção vence — é o que a supervisão cobra, e é o único jeito de o resíduo mensal parar de
+ * virar estoque invisível.
+ */
+export async function painelExcecoes(filtros = {}) {
+  const base = await painelPendentes({ ...filtros, dias: filtros.dias ?? 'tudo', situacoes: 'todas' });
+  const hojeIso = hoje();
+  const pendentes = (base.itens ?? []).filter((i) => !i.lancada && !i.nossa_saida);
+  const comMotivo = pendentes.filter((i) => i.motivo);
+  const marcadas = new Map(all('SELECT * FROM pendencia_motivos').map((m) => [m.chave, m]));
+
+  const itens = comMotivo.map((i) => {
+    const m = marcadas.get(i.chave) ?? {};
+    const atrasada = Boolean(m.prazo) && !m.retorno_em && m.prazo < hojeIso;
+    return {
+      ...i,
+      responsavel_externo: m.responsavel ?? null, prazo: m.prazo ?? null,
+      retorno_em: m.retorno_em ?? null, retorno_obs: m.retorno_obs ?? null,
+      atrasada,
+      // Sem prazo não dá para cobrar ninguém: é a primeira coisa a corrigir na lista
+      sem_prazo: !m.prazo, sem_responsavel: !m.responsavel,
+      dias_sem_retorno: m.atualizado_em && !m.retorno_em ? Math.max(0, diasEntre(String(m.atualizado_em).slice(0, 10), hojeIso)) : null,
+    };
+  });
+
+  const agrupar = (chave, rotulo) => [...itens.reduce((mapa, i) => {
+    const k = chave(i) ?? '—';
+    const a = mapa.get(k) ?? { chave: k, rotulo: rotulo(i), qtd: 0, valor: 0, atrasadas: 0 };
+    a.qtd += 1; a.valor += i.valor ?? 0; a.atrasadas += i.atrasada ? 1 : 0;
+    return mapa.set(k, a);
+  }, new Map()).values()].sort((a, b) => b.qtd - a.qtd);
+
+  return {
+    periodo: base.periodo, atualizado_em: new Date().toISOString(),
+    fonte: 'XMLs do recebimento do Senior ainda não lançados, com motivo registrado neste painel',
+    indicadores: {
+      pendentes: pendentes.length,
+      com_motivo: comMotivo.length,
+      sem_motivo: pendentes.length - comMotivo.length,
+      pct_com_motivo: pendentes.length ? Math.round((comMotivo.length / pendentes.length) * 100) : null,
+      atrasadas: itens.filter((i) => i.atrasada).length,
+      sem_prazo: itens.filter((i) => i.sem_prazo).length,
+      sem_responsavel: itens.filter((i) => i.sem_responsavel).length,
+      respondidas: itens.filter((i) => i.retorno_em).length,
+      valor: soma(itens, (i) => i.valor),
+    },
+    por_motivo: agrupar((i) => i.motivo, (i) => i.motivo_rotulo),
+    por_responsavel: agrupar((i) => i.responsavel_externo, (i) => i.responsavel_externo ?? 'Sem responsável definido'),
+    por_empresa: agrupar(chaveEmpresa, (i) => i.empresa),
+    motivos_disponiveis: MOTIVOS,
+    itens: itens.sort((a, b) => (b.atrasada - a.atrasada) || (b.dias_parada ?? 0) - (a.dias_parada ?? 0)).slice(0, 2000),
+  };
 }
 
 // ------------------------------------------------------------------ responsável pelo lançamento

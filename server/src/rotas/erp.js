@@ -71,6 +71,10 @@ rotasErpAdmin.get('/pendentes-lancamento', permitir('ver'), async (req, res) => 
   try { res.json(await painelPendentes(req.query)); } catch (e) { erroSenior(res, e); }
 });
 
+rotasErpAdmin.get('/pendentes-lancamento/excecoes', permitir('ver'), async (req, res) => {
+  const { painelExcecoes } = await import('../erp/pendentes.js');
+  try { res.json(await painelExcecoes(req.query)); } catch (e) { erroSenior(res, e); }
+});
 rotasErpAdmin.put('/pendentes-lancamento/motivo', permitir('decidir'), async (req, res) => {
   const { salvarMotivo } = await import('../erp/pendentes.js');
   const r = salvarMotivo(req.body ?? {}, req.usuario.id);
