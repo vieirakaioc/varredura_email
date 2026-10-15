@@ -128,6 +128,31 @@ rotasErpAdmin.delete('/malha-fina/:id', permitir('decidir'), async (req, res) =>
   res.json(apagarLote(Number(req.params.id)));
 });
 
+// ------------------------------------------------------------------ filas por tipo e compromisso do dia
+rotasErpAdmin.get('/filas', permitir('ver'), async (req, res) => {
+  const { listarFilas } = await import('../erp/filas.js');
+  res.json(listarFilas());
+});
+rotasErpAdmin.put('/filas', permitir('decidir'), async (req, res) => {
+  const { salvarFilas } = await import('../erp/filas.js');
+  auditar(req.usuario.id, 'filas.salvar', 'filas', null, req.body, req.ip);
+  res.json(salvarFilas(req.body?.filas ?? {}));
+});
+rotasErpAdmin.get('/filas/sugestao', permitir('ver'), async (req, res) => {
+  const { sugerirCompromisso } = await import('../erp/filas.js');
+  try { res.json(await sugerirCompromisso(req.query.dia)); } catch (e) { erroSenior(res, e); }
+});
+rotasErpAdmin.get('/filas/dia', permitir('ver'), async (req, res) => {
+  const { painelDoDia } = await import('../erp/filas.js');
+  try { res.json(await painelDoDia(req.query.dia)); } catch (e) { erroSenior(res, e); }
+});
+rotasErpAdmin.put('/filas/dia', permitir('decidir'), async (req, res) => {
+  const { salvarCompromisso } = await import('../erp/filas.js');
+  const r = salvarCompromisso(req.body?.dia, req.body?.itens, req.usuario.id);
+  auditar(req.usuario.id, 'filas.compromisso', 'dia', r.dia, { itens: r.gravados }, req.ip);
+  res.json(r);
+});
+
 rotasErpAdmin.get('/lancamentos', permitir('ver'), async (req, res) => {
   const { painelLancamentos } = await import('../erp/lancamentos.js');
   try { res.json(await painelLancamentos(req.query)); } catch (e) { erroSenior(res, e); }

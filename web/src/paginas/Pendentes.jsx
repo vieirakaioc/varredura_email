@@ -7,6 +7,7 @@ import { Topo, useAuth } from '../contexto.jsx';
 import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, filtrosLembrados, Kpi, numero, useDados, useFiltrosLembrados } from '../ui.jsx';
 import Lancamentos from './Lancamentos.jsx';
 import MalhaFina from './MalhaFina.jsx';
+import FilasCompromisso from './Filas.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
 const brlCurto = (v) => (Math.abs(v) >= 1000000 ? `R$ ${(v / 1000000).toFixed(1)} mi` : Math.abs(v) >= 1000 ? `R$ ${Math.round(v / 1000)} mil` : brl(v));
@@ -89,7 +90,7 @@ function Dica({ active, payload, label, sufixo }) {
 export default function Pendentes() {
   const [params] = useSearchParams();
   const aba = params.get('aba');
-  const painel = aba === 'lancamentos' ? <Lancamentos /> : aba === 'malha' ? <MalhaFina /> : <PainelPendentes />;
+  const painel = aba === 'lancamentos' ? <Lancamentos /> : aba === 'malha' ? <MalhaFina /> : aba === 'filas' ? <FilasCompromisso /> : <PainelPendentes />;
   return <ComAbas>{painel}</ComAbas>;
 }
 
@@ -110,6 +111,7 @@ function ComAbas({ children }) {
         <div className="abas" style={{ padding: 0 }}>
           <button className={aba === 'pendentes' ? 'ativa' : ''} onClick={() => trocarAba('pendentes')}>Pendentes de lançamento</button>
           <button className={aba === 'lancamentos' ? 'ativa' : ''} onClick={() => trocarAba('lancamentos')}>Produtividade do lançamento</button>
+          <button className={aba === 'filas' ? 'ativa' : ''} onClick={() => trocarAba('filas')}>Filas e compromisso</button>
           <button className={aba === 'malha' ? 'ativa' : ''} onClick={() => trocarAba('malha')}>Malha fina</button>
         </div>
         {children}

@@ -534,3 +534,28 @@ CREATE TABLE IF NOT EXISTS prestadores_pj (
   usuario_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- Operação por fila (piloto de 16 a 30/10/2026): quem atende cada tipo de nota.
+-- Fica aqui, e não no Senior: o plano não cria status nem registro por NF no ERP.
+CREATE TABLE IF NOT EXISTS filas_escrita (
+  categoria TEXT NOT NULL,                  -- combustivel | produto | servico | frete | energia_telecom | biomassa
+  usuario TEXT NOT NULL,                    -- nome como aparece no Senior (NOMUSU)
+  papel TEXT NOT NULL DEFAULT 'titular',    -- titular | apoio
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  PRIMARY KEY (categoria, usuario)
+);
+
+-- Compromisso de produção acordado para o dia, agregado por pessoa e tipo.
+-- O sistema sugere a partir das pendências e da meta; o gestor confirma ou ajusta.
+CREATE TABLE IF NOT EXISTS compromissos_dia (
+  dia TEXT NOT NULL,
+  usuario TEXT NOT NULL,
+  categoria TEXT NOT NULL,
+  quantidade INTEGER NOT NULL,
+  sugerido INTEGER,
+  observacao TEXT,
+  usuario_id INTEGER,
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  PRIMARY KEY (dia, usuario, categoria)
+);
+CREATE INDEX IF NOT EXISTS ix_compromissos_dia ON compromissos_dia(dia);
