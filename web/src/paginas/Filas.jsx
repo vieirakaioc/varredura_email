@@ -16,6 +16,7 @@ export default function Filas() {
   const dia = params.get('dia') || hoje();
   const avisar = useToast();
   const [editando, setEditando] = useState(false);
+  const [verDetalhe, setVerDetalhe] = useState(false);
 
   const filas = useDados(() => api.get('/filas'), [], { automatico: false });
   const painel = useDados(({ forcar } = {}) => api.get(`/filas/dia${qs({ dia, forcar: forcar ? '1' : '' })}`), [dia], { automatico: false });
@@ -45,6 +46,22 @@ export default function Filas() {
   const doTime = (d?.linhas ?? []).filter((l) => l.equipe === 'fiscal');
   const foraDaFila = doTime.filter((l) => l.compromisso == null && l.realizado > 0);
 
+  // Quadro: uma coluna por fila, uma barra por pessoa. É o que fica projetado na reunião de 10 minutos.
+  const quadro = (filas.dados?.categorias ?? [])
+    .map((c) => {
+      const pessoas = doTime.filter((l) => l.categoria === c.chave && (l.compromisso != null || l.realizado > 0))
+        .map((l) => ({ ...l, pct: l.compromisso ? Math.round((l.realizado / l.compromisso) * 100) : null }))
+        .sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || b.realizado - a.realizado);
+      return {
+        ...c, pessoas,
+        combinado: pessoas.reduce((s, l) => s + (l.compromisso ?? 0), 0),
+        feito: pessoas.reduce((s, l) => s + l.realizado, 0),
+        em_aberto: sugestao?.em_aberto?.[c.chave] ?? null,
+      };
+    })
+    .filter((c) => c.pessoas.length);
+  const falta = k?.compromisso != null ? Math.max(0, k.compromisso - doTime.reduce((s, l) => s + Math.min(l.realizado, l.compromisso ?? 0), 0)) : null;
+
   return (
     <>
       <Cartao>
@@ -58,6 +75,9 @@ export default function Filas() {
           {linhas && <button className="btn pequeno ghost" onClick={() => { setLinhas(null); setSugestao(null); }}>Cancelar</button>}
           <button className="btn pequeno ghost" onClick={() => painel.recarregar()}>Atualizar</button>
           <span className="espaco" />
+          <button className="btn pequeno ghost" onClick={() => setVerDetalhe((x) => !x)}>
+            {verDetalhe ? 'Esconder o detalhe' : 'Ver detalhe e exportar'}
+          </button>
           <button className="btn pequeno ghost" onClick={() => setEditando((x) => !x)}>
             {editando ? 'Fechar a configuração' : 'Configurar filas'}
           </button>
@@ -75,19 +95,7 @@ export default function Filas() {
 
       {painel.carregando && !d ? <Carregando /> : d && (
         <>
-          <div className="grade grade-kpi">
-            <Kpi rotulo="Compromisso do dia" valor={k.compromisso != null ? numero(k.compromisso) : 'A definir'}
-              detalhe={k.compromisso != null ? `${numero(k.pessoas_com_compromisso)} pessoa(s)` : 'nenhum combinado para este dia'}
-              cor={k.compromisso != null ? 'var(--serie-1)' : undefined} />
-            <Kpi rotulo="Realizado pelo time" valor={numero(k.realizado_time)}
-              detalhe={`${numero(k.realizado_total)} no total, com integração e supervisão`} />
-            <Kpi rotulo="Cumprimento" valor={k.cumprimento != null ? `${numero(k.cumprimento)}%` : 'Não se aplica'}
-              detalhe={k.cumprimento != null ? 'realizado na fila ÷ combinado' : 'sem compromisso combinado'}
-              cor={k.cumprimento == null ? undefined : k.cumprimento >= 100 ? 'var(--status-bom)' : k.cumprimento >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)'} />
-            <Kpi rotulo="Lançado fora da fila" valor={numero(foraDaFila.reduce((s, l) => s + l.realizado, 0))}
-              detalhe={foraDaFila.length ? `${foraDaFila.length} combinação(ões) pessoa × tipo` : 'nada fora do combinado'}
-              cor={foraDaFila.length ? 'var(--status-atencao)' : undefined} />
-          </div>
+          <Placar k={k} falta={falta} dia={dia} fora={foraDaFila.reduce((s, l) => s + l.realizado, 0)} />
 
           {sugestao && (
             <Cartao titulo="Sugestão do dia" sub="distribui as pendências em aberto pela capacidade de cada pessoa">
@@ -98,7 +106,19 @@ export default function Filas() {
             </Cartao>
           )}
 
-          <Cartao titulo={linhas ? `Compromisso de ${data(dia)} (ajuste antes de gravar)` : `Compromisso × realizado em ${data(dia)}`}
+          {!linhas && Boolean(quadro.length) && (
+            <div className="grade" style={{ gridTemplateColumns: `repeat(${Math.min(quadro.length, 4)}, minmax(0, 1fr))`, alignItems: 'start' }}>
+              {quadro.map((c) => <ColunaFila key={c.chave} fila={c} />)}
+            </div>
+          )}
+
+          {!linhas && !quadro.length && (
+            <Cartao><p className="muted" style={{ margin: 0 }}>
+              Nada combinado nem lançado em {data(dia)}. Use <strong>Sugerir compromisso</strong> para montar o quadro do dia.
+            </p></Cartao>
+          )}
+
+          {(linhas || verDetalhe) && <Cartao titulo={linhas ? `Compromisso de ${data(dia)} (ajuste antes de gravar)` : `Detalhe de ${data(dia)}`}
             semPadding
             acoes={!linhas && <BotaoExportar titulo={`Compromisso ${dia}`} linhas={d.linhas} rotulo="Excel"
               colunas={[
@@ -159,9 +179,9 @@ export default function Filas() {
                 <span className="muted">A quantidade é o que a pessoa combinou entregar no tipo dela. Lançamentos fora da fila aparecem à parte.</span>
               </div>
             )}
-          </Cartao>
+          </Cartao>}
 
-          {Boolean(foraDaFila.length) && !linhas && (
+          {Boolean(foraDaFila.length) && !linhas && verDetalhe && (
             <Cartao titulo="Lançado fora da fila combinada" sub="não é descumprimento: é trabalho que saiu do tipo acordado">
               <div className="tabela-wrap">
                 <table className="tabela">
@@ -180,6 +200,69 @@ export default function Filas() {
         </>
       )}
     </>
+  );
+}
+
+/** Faixa de números grandes do quadro: é o que se lê de longe na reunião de 10 minutos. */
+function Placar({ k, falta, dia, fora }) {
+  const cor = k.cumprimento == null ? 'var(--texto-3)'
+    : k.cumprimento >= 100 ? 'var(--status-bom)' : k.cumprimento >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)';
+  const bloco = (rotulo, valor, detalhe, corValor) => (
+    <div style={{ flex: '1 1 150px', minWidth: 140 }}>
+      <div className="muted" style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: '.04em' }}>{rotulo}</div>
+      <div style={{ fontSize: 46, fontWeight: 700, lineHeight: 1.1, color: corValor }}>{valor}</div>
+      {detalhe && <div className="muted pequeno">{detalhe}</div>}
+    </div>
+  );
+  return (
+    <Cartao>
+      <div className="linha" style={{ gap: 26, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        {bloco('Combinado', k.compromisso != null ? numero(k.compromisso) : 'A definir',
+          k.compromisso != null ? `${numero(k.pessoas_com_compromisso)} pessoa(s)` : 'use “Sugerir compromisso”')}
+        {bloco('Feito', numero(k.realizado_time), `${numero(k.realizado_total)} com integração`, 'var(--serie-1)')}
+        {bloco('Falta', falta != null ? numero(falta) : '—', falta === 0 ? 'dia fechado' : 'para fechar o combinado',
+          falta ? 'var(--status-atencao)' : 'var(--status-bom)')}
+        {bloco('Cumprimento', k.cumprimento != null ? `${numero(k.cumprimento)}%` : 'Não se aplica', 'na fila combinada', cor)}
+        {bloco('Fora da fila', numero(fora), fora ? 'trabalho de outro tipo' : 'nada fora do combinado',
+          fora ? 'var(--status-atencao)' : undefined)}
+      </div>
+    </Cartao>
+  );
+}
+
+/** Uma coluna por fila: o tipo, o total e uma barra por pessoa. */
+function ColunaFila({ fila }) {
+  const pct = fila.combinado ? Math.round((fila.feito / fila.combinado) * 100) : null;
+  const corDe = (p) => (p == null ? 'var(--texto-3)' : p >= 100 ? 'var(--status-bom)' : p >= 60 ? 'var(--status-atencao)' : 'var(--status-critico)');
+  return (
+    <Cartao>
+      <div className="linha entre" style={{ alignItems: 'baseline' }}>
+        <strong style={{ fontSize: 16 }}>{fila.rotulo}</strong>
+        <span style={{ fontSize: 24, fontWeight: 700, color: corDe(pct) }}>
+          {numero(fila.feito)}<span className="muted" style={{ fontSize: 15, fontWeight: 400 }}>
+            {fila.combinado ? ` / ${numero(fila.combinado)}` : ''}</span>
+        </span>
+      </div>
+      {fila.em_aberto != null && <div className="muted pequeno">{numero(fila.em_aberto)} em aberto na fila</div>}
+      <div style={{ marginTop: 10 }}>
+        {fila.pessoas.map((p) => (
+          <div key={p.usuario} style={{ marginBottom: 10 }}>
+            <div className="linha entre pequeno">
+              <span className="truncar">{p.usuario.split('.')[0]}</span>
+              <strong style={{ color: corDe(p.pct) }}>
+                {numero(p.realizado)}{p.compromisso != null ? ` / ${numero(p.compromisso)}` : ''}
+              </strong>
+            </div>
+            <div className="barra-progresso" style={{ height: 10 }}>
+              <div style={{ width: `${Math.min(100, p.pct ?? 0)}%`, background: corDe(p.pct) }} />
+            </div>
+            {p.compromisso != null && p.realizado < p.compromisso && (
+              <div className="muted pequeno">faltam {numero(p.compromisso - p.realizado)}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Cartao>
   );
 }
 
