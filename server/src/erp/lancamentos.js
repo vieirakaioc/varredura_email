@@ -5,7 +5,7 @@
 // DATGER é a data em que a nota foi lançada.
 import { getConfig, setConfig } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
-import { ateOMinuto, comCache } from './cache.js';
+import { ateOMinuto, comCache, versaoSql } from './cache.js';
 import { CATEGORIAS, categoriaDe, colunasItem, sqlMarcasItem } from './categorias.js';
 
 // Situação da nota no Senior (E440NFC.SITNFC). Os relatórios do Senior costumam sair só com "Fechada".
@@ -356,6 +356,41 @@ export async function painelLancamentos(filtros = {}) {
 
 // ------------------------------------------------------------------ histórico mensal × meta
 // Para conferir se a meta é coerente com o que o time realmente lança, mês a mês.
+// Mesmo recorte do histórico, mas agrupado pelo que define o tipo de nota. A classificação em si
+// é feita em JS (categoriaDe), então aqui só vêm as marcas: espécie, produto/serviço e as do XML.
+const SQL_MENSAL_CATEGORIA = `SELECT YEAR(n.DATGER) AS ANO, MONTH(n.DATGER) AS MES, n.CODSNF, n.CHVNEL,
+    CASE WHEN EXISTS (SELECT 1 FROM E440IPC ip1 WHERE ip1.CODEMP = n.CODEMP AND ip1.CODFIL = n.CODFIL AND ip1.CODFOR = n.CODFOR AND ip1.NUMNFC = n.NUMNFC AND ip1.CODSNF = n.CODSNF) THEN 1 ELSE 0 END AS TEM_PRODUTO,
+    CASE WHEN EXISTS (SELECT 1 FROM E440ISC is1 WHERE is1.CODEMP = n.CODEMP AND is1.CODFIL = n.CODFIL AND is1.CODFOR = n.CODFOR AND is1.NUMNFC = n.NUMNFC AND is1.CODSNF = n.CODSNF) THEN 1 ELSE 0 END AS TEM_SERVICO{marcas},
+    u.NOMUSU, n.USUGER
+  FROM E440NFC n
+  LEFT JOIN E095FOR fo ON fo.CODFOR = n.CODFOR
+  LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
+  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'`;
+
+/** Quantas notas de cada tipo (combustível, produto, serviço, frete...) foram lançadas em cada mês. */
+async function categoriasPorMes(desde, ate, forcar) {
+  const cols = await colunasItem();
+  const marcas = sqlMarcasItem(cols, 'n.CHVNEL', 'fo.NOMFOR');
+  const sql = SQL_MENSAL_CATEGORIA.replace('{marcas}', marcas);
+  const linhas = await comCache(`lancamentos-mensal-categoria|${versaoSql(sql)}|${ate.toLocaleDateString('sv-SE')}`,
+    forcar === '1' ? 0 : 3600_000, () => consultar(sql, desde, { ate }));
+  const metas = metasLancamento();
+  const porMes = new Map();
+  for (const l of linhas) {
+    const mes = `${l.ANO}-${String(l.MES).padStart(2, '0')}`;
+    const categoria = categoriaDe({
+      chave: l.CHVNEL, especie: l.CODSNF, biomassa: Number(l.BIOMASSA) === 1, combustivel: Number(l.COMBUSTIVEL) === 1,
+      temProduto: Number(l.TEM_PRODUTO) === 1, temServico: Number(l.TEM_SERVICO) === 1,
+    });
+    const m = porMes.get(mes) ?? { mes, total: {}, time: {} };
+    m.total[categoria] = (m.total[categoria] ?? 0) + 1;
+    // "do time" exclui integração e supervisão, para bater com a coluna TIME da tabela
+    if (metas.equipeDe(l.NOMUSU ?? l.USUGER) === 'fiscal') m.time[categoria] = (m.time[categoria] ?? 0) + 1;
+    porMes.set(mes, m);
+  }
+  return porMes;
+}
+
 const SQL_MENSAL = `SELECT YEAR(n.DATGER) AS ANO, MONTH(n.DATGER) AS MES, n.USUGER, MAX(u.NOMUSU) AS NOMUSU,
     COUNT(*) AS NOTAS, COUNT(DISTINCT n.DATGER) AS DIAS
   FROM E440NFC n
@@ -375,6 +410,7 @@ export async function historicoMensal({ forcar } = {}) {
   const desde = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() - 11, 1));
   const linhas = await comCache(`lancamentos-mensal|${hoje.toLocaleDateString('sv-SE')}`, forcar === '1' ? 0 : 3600_000,
     () => consultar(SQL_MENSAL, desde, { ate: hoje }));
+  const porCategoria = await categoriasPorMes(desde, hoje, forcar);
   const metas = metasLancamento();
   const par = metas.parametros;
   const hojeIso = hoje.toLocaleDateString('sv-SE');
@@ -404,6 +440,8 @@ export async function historicoMensal({ forcar } = {}) {
       mes: m.mes, parcial: diasAteHoje.length < dias.length,
       notas_time: notasTime, notas_outros: outros.reduce((s, p) => s + p.notas, 0),
       notas_supervisao: supervisao.reduce((s, p) => s + p.notas, 0),
+      categorias: porCategoria.get(m.mes)?.time ?? {},
+      categorias_total: porCategoria.get(m.mes)?.total ?? {},
       supervisao: supervisao.sort((a, b) => b.notas - a.notas),
       pessoas_time: time.length, pessoa_dias: pessoaDias,
       media_pessoa_dia: pessoaDias ? Math.round((notasTime / pessoaDias) * 10) / 10 : null,
@@ -414,7 +452,24 @@ export async function historicoMensal({ forcar } = {}) {
   });
   const completos = meses.filter((m) => !m.parcial && m.notas_time > 0);
   const media = (f) => (completos.length ? Math.round((completos.reduce((s, m) => s + f(m), 0) / completos.length) * 10) / 10 : null);
+
+  // Tipo de nota: média dos meses fechados contra o mês corrente, para ver o que mudou no mix
+  const atual = meses.find((m) => m.parcial) ?? meses.at(-1);
+  const porTipo = Object.entries(CATEGORIAS).map(([chave, rotulo]) => ({
+    chave, rotulo,
+    media: completos.length ? Math.round((completos.reduce((s, m) => s + (m.categorias[chave] ?? 0), 0) / completos.length) * 10) / 10 : 0,
+    atual: atual?.categorias?.[chave] ?? 0,
+  })).filter((c) => c.media > 0 || c.atual > 0).sort((a, b) => b.media - a.media);
+
   return {
+    por_tipo: {
+      meses: completos.length, mes_atual: atual?.mes ?? null, parcial: Boolean(atual?.parcial),
+      // No mês corrente só passaram alguns dias úteis: sem isso a comparação acusaria queda sempre
+      proporcao_do_mes: atual?.parcial && atual.meta && completos.length
+        ? Math.round((atual.meta / (completos.reduce((s, m) => s + m.meta, 0) / completos.length)) * 100) / 100
+        : 1,
+      itens: porTipo,
+    },
     parametros: par, meta_dia_padrao: metas.padrao, calculo: metas.calculo,
     meses,
     media_meses_completos: {

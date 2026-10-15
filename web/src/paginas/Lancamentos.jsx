@@ -604,6 +604,7 @@ function HistoricoMensal() {
   const m = dados.media_meses_completos;
   const par = dados.parametros;
   return (
+    <div className="grade" style={{ gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)', alignItems: 'start' }}>
     <Cartao titulo="Histórico mensal do time × meta" sub={`últimos 12 meses · pela data do lançamento · meta atual ${dados.calculo}`}>
       {m.meses > 0 && (
         <div className="aviso" style={{ marginBottom: 12 }}>
@@ -661,6 +662,54 @@ function HistoricoMensal() {
       <p className="muted pequeno" style={{ marginBottom: 0 }}>
         Meta do mês = dias úteis de cada pessoa do time que lançou no mês × meta diária dela (sem descontar feriados e férias).
         Min/nota real = tempo produtivo nos dias em que cada um lançou ÷ notas do time. Passe o mouse em “Pessoas” para ver quem entrou na conta.
+      </p>
+    </Cartao>
+    <PorTipoDeNota por={dados.por_tipo} />
+    </div>
+  );
+}
+
+/**
+ * Mix de tipos de nota: média dos meses fechados contra o mês corrente.
+ * O mês corrente é comparado com a fatia proporcional da média (pelos dias úteis já corridos),
+ * senão ele apareceria sempre abaixo só por estar pela metade.
+ */
+function PorTipoDeNota({ por }) {
+  if (!por?.itens?.length) return null;
+  const dados = por.itens.map((i) => ({
+    ...i, esperado: Math.round(i.media * por.proporcao_do_mes),
+    rotulo: i.rotulo.replace(' (posto)', '').replace(' (CT-e)', ''),
+  }));
+  const pct = Math.round(por.proporcao_do_mes * 100);
+  return (
+    <Cartao titulo="Por tipo de nota" sub={`média de ${por.meses} meses fechados × ${mesCurto(por.mes_atual)}${por.parcial ? ` (${pct}% do mês)` : ''}`}>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={dados} layout="vertical" margin={{ left: 8, right: 44, top: 6 }} barCategoryGap="22%">
+          <CartesianGrid horizontal={false} stroke="var(--grade)" />
+          <XAxis type="number" tick={eixo} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="rotulo" tick={eixo} axisLine={false} tickLine={false} width={104} />
+          <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={({ active, payload }) => (active && payload?.length ? (() => {
+            const x = payload[0].payload;
+            const dif = x.atual - x.esperado;
+            return (
+              <div className="tooltip-grafico">
+                <div className="t">{x.rotulo}</div>
+                <div>Média dos meses fechados: <strong>{numero(x.media, 1)}</strong>/mês</div>
+                <div>{mesCurto(por.mes_atual)}: <strong>{numero(x.atual)}</strong>{por.parcial ? ` (esperado até aqui: ${numero(x.esperado)})` : ''}</div>
+                {por.parcial && <div className="muted pequeno">{dif >= 0 ? `+${numero(dif)}` : numero(dif)} em relação ao ritmo dos outros meses</div>}
+              </div>
+            );
+          })() : null)} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar isAnimationActive={false} dataKey="media" name={`Média de ${por.meses} meses`} fill="var(--texto-3)" fillOpacity={0.45} radius={[0, 4, 4, 0]} maxBarSize={16} />
+          <Bar isAnimationActive={false} dataKey="atual" name={mesCurto(por.mes_atual)} fill="var(--serie-1)" radius={[0, 4, 4, 0]} maxBarSize={16}>
+            <LabelList dataKey="atual" position="right" style={rotulo} formatter={(v) => (v ? numero(v) : '')} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <p className="muted pequeno" style={{ marginBottom: 0 }}>
+        Só o que o time de Escrita Fiscal lançou (sem integração e sem supervisão).
+        {por.parcial && ` ${mesCurto(por.mes_atual)} está em ${pct}% dos dias úteis: compare com a fatia proporcional da média, no tooltip.`}
       </p>
     </Cartao>
   );
