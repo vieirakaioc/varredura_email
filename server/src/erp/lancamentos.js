@@ -25,7 +25,11 @@ const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA
 const PARAMETROS_PADRAO = { minutos_por_nota: 12, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
 // Emanuelle é aprendiz: 4 horas por dia, de segunda a quinta
 const JORNADAS_PADRAO = { 'EMANUELLE.SILVA': { minutos_dia: 240, dias_semana: [1, 2, 3, 4] } };
-export const EQUIPES = { fiscal: 'Escrita Fiscal', outros: 'Outros' };
+// Supervisão lança por exceção: entra na conta do que foi feito, mas não na média por pessoa
+// nem na meta. Misturada ao time, ela puxa a média para baixo e cobra meta de quem não lança
+// o dia inteiro — foi o que acontecia com a supervisora até aqui.
+const SUPERVISAO_PADRAO = ['ERICA.ARAUJO'];
+export const EQUIPES = { fiscal: 'Escrita Fiscal', supervisao: 'Supervisão', outros: 'Outros' };
 const nomeChave = (n) => String(n ?? '').trim().toUpperCase();
 const minutos = (hhmm) => { const [h, m] = String(hhmm ?? '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
@@ -34,14 +38,17 @@ const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 export function metasLancamento() {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
   const par = { ...PARAMETROS_PADRAO, ...(cfg.parametros ?? {}) };
-  const membros = cfg.escrita_fiscal ?? ESCRITA_FISCAL_PADRAO;
+  const supervisao = cfg.supervisao ?? SUPERVISAO_PADRAO;
+  const supervisores = new Set(supervisao.map(nomeChave));
+  // Quem está nas duas listas conta como supervisão: a lista da supervisão manda
+  const membros = (cfg.escrita_fiscal ?? ESCRITA_FISCAL_PADRAO).filter((n) => !supervisores.has(nomeChave(n)));
   const doTime = new Set(membros.map(nomeChave));
   const jornadas = Object.fromEntries(Object.entries(cfg.jornadas ?? JORNADAS_PADRAO).map(([n, j]) => [nomeChave(n), j]));
   const fixas = Object.fromEntries(Object.entries(cfg.pessoas ?? {}).map(([n, v]) => [nomeChave(n), v]));
   const minutosPadrao = Math.max(0, minutos(par.saida) - minutos(par.entrada) - Number(par.intervalo_min || 0));
   const porDia = (min) => Math.floor((min * (Number(par.produtividade) / 100)) / Number(par.minutos_por_nota || 5));
   const padrao = porDia(minutosPadrao);
-  const equipeDe = (usuario) => (doTime.has(nomeChave(usuario)) ? 'fiscal' : 'outros');
+  const equipeDe = (usuario) => (supervisores.has(nomeChave(usuario)) ? 'supervisao' : doTime.has(nomeChave(usuario)) ? 'fiscal' : 'outros');
   /** Jornada e meta diária de uma pessoa do time (null para quem não é do time). */
   const jornadaDe = (usuario) => {
     if (equipeDe(usuario) !== 'fiscal') return null;
@@ -53,7 +60,7 @@ export function metasLancamento() {
   return {
     parametros: par, minutos_jornada: minutosPadrao, padrao,
     calculo: `${Math.floor(minutosPadrao / 60)}h${String(minutosPadrao % 60).padStart(2, '0')} (${par.entrada}–${par.saida} − ${par.intervalo_min} min) × ${par.produtividade}% ÷ ${par.minutos_por_nota} min por nota`,
-    escrita_fiscal: membros, jornadas: cfg.jornadas ?? JORNADAS_PADRAO, pessoas: cfg.pessoas ?? {},
+    escrita_fiscal: membros, supervisao, jornadas: cfg.jornadas ?? JORNADAS_PADRAO, pessoas: cfg.pessoas ?? {},
     equipeDe, jornadaDe,
     metaDe: (usuario) => jornadaDe(usuario)?.meta_dia ?? null,
     /** Meta da pessoa numa data (0 se ela não trabalha nesse dia da semana). */
@@ -70,10 +77,11 @@ export const rotuloDias = (lista) => lista.map((d) => DIAS_SEMANA[d]).join(', ')
  * Grava a configuração das metas. Campos opcionais:
  *   parametros: { minutos_por_nota, entrada, saida, intervalo_min, produtividade, dias_semana }
  *   escrita_fiscal: [nomes]
+ *   supervisao: [nomes]      (lançam, mas ficam fora da meta e da média por pessoa)
  *   jornadas: { nome: { minutos_dia, dias_semana } | null }   (null = jornada padrão)
  *   pessoas: { nome: número | null }                           (meta fixa; null = pela jornada)
  */
-export function salvarMetas({ parametros, escrita_fiscal: time, jornadas, pessoas } = {}) {
+export function salvarMetas({ parametros, escrita_fiscal: time, supervisao, jornadas, pessoas } = {}) {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
   const num = (v) => (v === null || v === '' || v === undefined || !(Number(v) > 0) ? null : Math.round(Number(v) * 10) / 10);
   const dias = (l) => (Array.isArray(l) ? [...new Set(l.map(Number).filter((d) => d >= 0 && d <= 6))].sort() : null);
@@ -88,6 +96,7 @@ export function salvarMetas({ parametros, escrita_fiscal: time, jornadas, pessoa
     cfg.parametros = p;
   }
   if (Array.isArray(time)) cfg.escrita_fiscal = [...new Set(time.map((n) => String(n).trim()).filter(Boolean))];
+  if (Array.isArray(supervisao)) cfg.supervisao = [...new Set(supervisao.map((n) => String(n).trim()).filter(Boolean))];
   if (jornadas) {
     cfg.jornadas = { ...(cfg.jornadas ?? JORNADAS_PADRAO) };
     for (const [nome, j] of Object.entries(jornadas)) {
@@ -378,7 +387,9 @@ export async function historicoMensal({ forcar } = {}) {
   }
   const meses = [...porMes.values()].sort((a, b) => a.mes.localeCompare(b.mes)).map((m) => {
     const time = m.pessoas.filter((p) => metas.equipeDe(p.usuario) === 'fiscal');
-    const outros = m.pessoas.filter((p) => metas.equipeDe(p.usuario) !== 'fiscal');
+    // Supervisão sai da média e da meta, mas o que ela lançou continua visível em coluna própria
+    const supervisao = m.pessoas.filter((p) => metas.equipeDe(p.usuario) === 'supervisao');
+    const outros = m.pessoas.filter((p) => metas.equipeDe(p.usuario) === 'outros');
     const [ano, mm] = m.mes.split('-').map(Number);
     const dias = [];
     for (let d = new Date(Date.UTC(ano, mm - 1, 1)); d.getUTCMonth() === mm - 1; d.setUTCDate(d.getUTCDate() + 1)) dias.push(d.toISOString().slice(0, 10));
@@ -392,6 +403,8 @@ export async function historicoMensal({ forcar } = {}) {
     return {
       mes: m.mes, parcial: diasAteHoje.length < dias.length,
       notas_time: notasTime, notas_outros: outros.reduce((s, p) => s + p.notas, 0),
+      notas_supervisao: supervisao.reduce((s, p) => s + p.notas, 0),
+      supervisao: supervisao.sort((a, b) => b.notas - a.notas),
       pessoas_time: time.length, pessoa_dias: pessoaDias,
       media_pessoa_dia: pessoaDias ? Math.round((notasTime / pessoaDias) * 10) / 10 : null,
       meta, pct_meta: meta ? Math.round((notasTime / meta) * 100) : null,

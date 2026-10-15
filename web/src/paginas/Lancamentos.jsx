@@ -19,7 +19,7 @@ const mesesDisponiveis = () => Array.from({ length: 12 }, (_, i) => {
 
 const COLUNAS_PESSOAS = [
   { titulo: 'Pessoa', valor: (p) => p.usuario },
-  { titulo: 'Bloco', valor: (p) => (p.equipe === 'fiscal' ? 'Escrita Fiscal' : 'Outros') },
+  { titulo: 'Bloco', valor: (p) => ({ fiscal: 'Escrita Fiscal', supervisao: 'Supervisão', outros: 'Outros' }[p.equipe] ?? p.equipe) },
   { titulo: 'Notas lançadas', tipo: 'numero', valor: (p) => p.notas },
   { titulo: 'Hoje', tipo: 'numero', valor: (p) => p.hoje },
   { titulo: 'Dias ativos', tipo: 'numero', valor: (p) => p.dias_ativos },
@@ -682,6 +682,9 @@ function EditorMetas({ metas, pessoas, aoSalvar }) {
   const fixaSalva = (n) => Object.entries(metas.pessoas ?? {}).find(([k]) => chave(k) === chave(n))?.[1];
   const [par, setPar] = useState({ ...metas.parametros });
   const [time, setTime] = useState(() => new Set(metas.escrita_fiscal.map(chave)));
+  // Supervisão lança por exceção: fica fora da meta e da média por pessoa
+  const [supervisao, setSupervisao] = useState(() => new Set((metas.supervisao ?? []).map(chave)));
+  const alternarSupervisao = (n) => setSupervisao((t) => { const x = new Set(t); if (x.has(chave(n))) x.delete(chave(n)); else { x.add(chave(n)); setTime((y) => { const z = new Set(y); z.delete(chave(n)); return z; }); } return x; });
   const [jornadas, setJornadas] = useState(() => Object.fromEntries(nomes.map((n) => {
     const j = jornadaSalva(n);
     return [n, { horas: j?.minutos_dia ? String(j.minutos_dia / 60) : '', dias: j?.dias_semana ?? null, fixa: fixaSalva(n) != null ? String(fixaSalva(n)) : '' }];
@@ -700,6 +703,7 @@ function EditorMetas({ metas, pessoas, aoSalvar }) {
       await api.put('/lancamentos/metas', {
         parametros: par,
         escrita_fiscal: nomes.filter((n) => time.has(chave(n))),
+        supervisao: nomes.filter((n) => supervisao.has(chave(n))),
         jornadas: Object.fromEntries(nomes.map((n) => {
           const j = jornadas[n];
           return [n, time.has(chave(n)) && (j.horas || j.dias) ? { minutos_dia: j.horas ? Math.round(Number(String(j.horas).replace(',', '.')) * 60) : null, dias_semana: j.dias } : null];
@@ -710,7 +714,8 @@ function EditorMetas({ metas, pessoas, aoSalvar }) {
     } catch (e) { setErro(e); }
     setSalvando(false);
   };
-  const ordenados = [...nomes].sort((x, y) => (time.has(chave(y)) - time.has(chave(x))) || x.localeCompare(y, 'pt-BR'));
+  const dentro = (n) => time.has(chave(n)) || supervisao.has(chave(n));
+  const ordenados = [...nomes].sort((x, y) => (dentro(y) - dentro(x)) || x.localeCompare(y, 'pt-BR'));
   const campo = (k, props) => <input value={par[k] ?? ''} onChange={(e) => setPar((p) => ({ ...p, [k]: e.target.value }))} {...props} />;
   return (
     <div style={{ padding: 12, borderBottom: '1px solid var(--borda)', background: 'var(--superficie-2)' }}>
@@ -730,7 +735,7 @@ function EditorMetas({ metas, pessoas, aoSalvar }) {
       </div>
       <div className="tabela-wrap" style={{ marginTop: 6, maxHeight: 360 }}>
         <table className="tabela" style={{ fontSize: 12 }}>
-          <thead><tr><th>Time</th><th>Pessoa</th><th className="num">Média atual</th><th>Horas/dia</th><th>Dias da semana</th><th className="num">Meta fixa</th><th className="num">Meta/dia</th></tr></thead>
+          <thead><tr><th>Time</th><th title="Lança por exceção: fica fora da meta e da média por pessoa">Superv.</th><th>Pessoa</th><th className="num">Média atual</th><th>Horas/dia</th><th>Dias da semana</th><th className="num">Meta fixa</th><th className="num">Meta/dia</th></tr></thead>
           <tbody>
             {ordenados.map((n) => {
               const noTime = time.has(chave(n));
@@ -739,8 +744,9 @@ function EditorMetas({ metas, pessoas, aoSalvar }) {
               const dias = j.dias ?? par.dias_semana ?? [];
               const minutos = j.horas ? Math.round(Number(String(j.horas).replace(',', '.')) * 60) : minPadrao;
               return (
-                <tr key={n} style={{ opacity: noTime ? 1 : 0.6 }}>
-                  <td><input type="checkbox" checked={noTime} onChange={() => alternarTime(n)} /></td>
+                <tr key={n} style={{ opacity: noTime || supervisao.has(chave(n)) ? 1 : 0.6 }}>
+                  <td><input type="checkbox" checked={noTime} disabled={supervisao.has(chave(n))} onChange={() => alternarTime(n)} /></td>
+                  <td><input type="checkbox" checked={supervisao.has(chave(n))} onChange={() => alternarSupervisao(n)} /></td>
                   <td style={{ fontWeight: noTime ? 600 : undefined }}>{n}</td>
                   <td className="num">{p ? numero(p.media_dia, 1) : <span className="muted">—</span>}</td>
                   <td><input type="number" min="0" step="0.5" value={j.horas} placeholder={horas(minPadrao)} disabled={!noTime} style={{ width: 70 }} onChange={(e) => setJ(n, 'horas', e.target.value)} /></td>
