@@ -228,7 +228,16 @@ function lerPlanilhaEfd(ws, mapa, celula) {
 
 /** Importa a planilha (ou atualiza o lote, se o mesmo arquivo já tiver sido enviado). */
 export async function importarPlanilha({ buffer, nomeArquivo, usuarioId }) {
-  const { notas, competencia, tipo } = await lerPlanilha(buffer);
+  const { notas: lidas, competencia, tipo } = await lerPlanilha(buffer);
+  // A planilha da contabilidade às vezes repete a mesma linha. Antes isso derrubava a importação
+  // inteira na restrição de unicidade; agora a repetição é ignorada e contada.
+  const vistas = new Map();
+  for (const n of lidas) {
+    const k = tipo === 'efd' ? n.chave : [n.cnpj_prestador, n.numero, n.codigo_verificador ?? ''].join('|');
+    if (!vistas.has(k)) vistas.set(k, n);
+  }
+  const notas = [...vistas.values()];
+  const duplicadas = lidas.length - notas.length;
   const hash = crypto.createHash('sha256').update(buffer).digest('hex');
   let jaExistia = false;
   const loteId = tx(() => {
@@ -250,7 +259,7 @@ export async function importarPlanilha({ buffer, nomeArquivo, usuarioId }) {
     return id;
   });
   const r = await conferirLote(loteId, { forcar: true });
-  return { lote_id: loteId, reimportado: jaExistia, notas_lidas: notas.length, competencia, tipo, ...r };
+  return { lote_id: loteId, reimportado: jaExistia, notas_lidas: notas.length, duplicadas, competencia, tipo, ...r };
 }
 
 // ------------------------------------------------------------------ conferência do relatório da EFD

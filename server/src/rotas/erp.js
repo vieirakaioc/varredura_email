@@ -120,7 +120,11 @@ rotasErpAdmin.post('/malha-fina', permitir('decidir'), uploadPlanilha.single('ar
     const r = await importarPlanilha({ buffer: req.file.buffer, nomeArquivo: req.file.originalname, usuarioId: req.usuario.id });
     auditar(req.usuario.id, 'malha_fina.importar', 'lote', r.lote_id, { arquivo: req.file.originalname, ...r.resumo }, req.ip);
     res.json(r);
-  } catch (e) { erroSenior(res, e); }
+  } catch (e) {
+    // Erro de leitura da planilha é do arquivo, não da conexão: mostrar o motivo real
+    if (/Senior|connect|ETIMEOUT|ESOCKET|ECONNREFUSED/i.test(e.message)) erroSenior(res, e);
+    else res.status(400).json({ erro: `Não consegui importar a planilha: ${e.message}` });
+  }
 });
 rotasErpAdmin.post('/malha-fina/:id/conferir', permitir('ver'), async (req, res) => {
   const { conferirLote } = await import('../erp/malhafina.js');

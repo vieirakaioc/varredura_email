@@ -159,7 +159,8 @@ export default function MalhaFina() {
       const corpo = new FormData();
       corpo.append('arquivo', arquivo);
       const r = await api.upload('/malha-fina', corpo);
-      avisar(`${r.reimportado ? 'Planilha atualizada' : 'Planilha importada'}: ${numero(r.notas_lidas)} nota(s), `
+      avisar(`${r.reimportado ? 'Planilha atualizada' : 'Planilha importada'}: ${numero(r.notas_lidas)} nota(s)`
+        + `${r.duplicadas ? ` (${numero(r.duplicadas)} linha(s) repetida(s) ignorada(s))` : ''}, `
         + `${numero(r.resumo?.nao_lancada ?? 0)} ainda não lançada(s)`, 'ok');
       setParams({ aba: 'malha', lote: String(r.lote_id) });
       lotes.recarregar();

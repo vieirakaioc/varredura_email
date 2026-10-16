@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -11,15 +12,37 @@ function lista(v, padrao = []) {
   return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : padrao;
 }
 
-if (!env.APP_SECRET) {
-  console.warn('[config] APP_SECRET não definido: usando segredo efêmero (tokens OAuth salvos não serão legíveis após reiniciar). Defina APP_SECRET no .env.');
+const dataDir = path.resolve(ROOT_DIR, env.DATA_DIR || 'data');
+
+/**
+ * Chave que cifra o que é guardado no banco (senhas de certificados, tokens do Zoho).
+ * Vem do APP_SECRET do .env; sem ele, é gerada uma vez e gravada em data/.app_secret. Antes era
+ * sorteada a cada início, e o que tinha sido cifrado (ex.: senha do certificado) ficava ilegível
+ * depois de reiniciar o servidor.
+ */
+function segredoDoApp() {
+  if (env.APP_SECRET) return env.APP_SECRET;
+  const arquivo = path.join(dataDir, '.app_secret');
+  try {
+    const salvo = fs.readFileSync(arquivo, 'utf8').trim();
+    if (salvo) return salvo;
+  } catch { /* ainda não existe */ }
+  const novo = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(arquivo, novo, { mode: 0o600 });
+    console.warn(`[config] APP_SECRET não definido no .env: gerado e guardado em ${arquivo} (faça backup da pasta data).`);
+  } catch (e) {
+    console.warn(`[config] APP_SECRET não definido e não consegui gravar ${arquivo} (${e.message}): o que for cifrado não será legível após reiniciar.`);
+  }
+  return novo;
 }
 
 export const config = {
   port: Number(env.PORT || 3000),
   publicUrl: env.PUBLIC_URL || `http://localhost:${env.PORT || 3000}`,
-  dataDir: path.resolve(ROOT_DIR, env.DATA_DIR || 'data'),
-  appSecret: env.APP_SECRET || crypto.randomBytes(32).toString('hex'),
+  dataDir,
+  appSecret: segredoDoApp(),
   sessaoHoras: Number(env.SESSAO_HORAS || 12),
 
   captura: {
