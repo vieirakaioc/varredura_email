@@ -10,7 +10,7 @@ Requisitos: Node.js 22.13+ (testado no 24). Não há banco externo: o sistema us
 
 ```bash
 npm install
-cp .env.example .env        # preencha APP_SECRET (obrigatório) e, quando tiver, as chaves do Zoho
+cp .env.example .env        # APP_SECRET: se ficar vazio, é gerado uma vez em data/.app_secret (faça backup da pasta data)
 npm run build               # compila o front-end
 npm run seed -- --reset     # OPCIONAL: base de demonstração fictícia (~100 e-mails/NFs)
 npm start                   # http://localhost:3000
