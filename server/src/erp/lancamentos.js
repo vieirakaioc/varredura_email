@@ -21,7 +21,7 @@ const LIMITE_ITENS = 10000;
 // Cada pessoa pode ter jornada própria (minutos por dia e dias da semana, ex.: aprendiz) ou uma meta fixa.
 // Feriados não são descontados.
 const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA', 'AMANDA.MARQUES', 'ELZELI.SANTOS',
-  'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA'];
+  'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA', 'DYNER.AVILA'];
 const PARAMETROS_PADRAO = { minutos_por_nota: 12, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
 // Emanuelle é aprendiz: 4 horas por dia, de segunda a quinta
 const JORNADAS_PADRAO = { 'EMANUELLE.SILVA': { minutos_dia: 240, dias_semana: [1, 2, 3, 4] } };
