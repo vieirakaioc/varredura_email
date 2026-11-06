@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
 import { useAuth } from '../contexto.jsx';
 import { BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
@@ -20,9 +20,7 @@ const BLOCO = { fiscal: 'Escrita Fiscal', supervisao: 'Supervisão', outros: 'Ou
  * e o compromisso de produção do dia. Nada vira status ou apontamento por nota no ERP.
  */
 export default function Filas() {
-  const { usuario } = useAuth();
   const [visao, setVisao] = useState('carteira');
-  if (usuario.perfil === 'membro') return <Navigate to="/carteira" replace />;
   return <>
     <div className="linha" style={{ gap: 8, marginBottom: 12 }}>
       <button className={`btn pequeno ${visao === 'carteira' ? '' : 'ghost'}`} onClick={() => setVisao('carteira')}>Carteira de notas</button>

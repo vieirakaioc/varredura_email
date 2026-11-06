@@ -20,7 +20,7 @@ export const PERMISSOES = {
   carteira_gerir: ['admin', 'fiscal'],
   malha_ver: ['admin', 'membro', 'fiscal', 'consulta', 'auditor', 'financeiro'],
   exportar: ['admin', 'membro', 'fiscal', 'consulta', 'auditor', 'financeiro'],
-  ver: ['admin', 'fiscal', 'consulta', 'auditor', 'financeiro'],
+  ver: ['admin', 'membro', 'fiscal', 'consulta', 'auditor', 'financeiro'],
   decidir: ['admin', 'fiscal'],            // aprovar, reprovar, ignorar alerta, encaminhar, reprocessar
   financeiro: ['admin', 'fiscal', 'auditor', 'financeiro'], // painel de contas a pagar
   pagamentos: ['admin', 'financeiro'],     // registrar pagamento/programação das duplicatas
@@ -83,11 +83,17 @@ export function autenticar(req, res, next) {
 
 // A lista é deliberadamente fechada: endpoints antigos têm leituras sem permissão própria.
 // A restrição vale também para chamadas diretas à API e para sessões já abertas.
-async function acessoMembro(req, res, next) {
+function acessoMembro(req, res, next) {
   const caminho = req.path.toLowerCase().replace(/\/+$/, '') || '/';
   const metodo = req.method === 'HEAD' ? 'GET' : req.method;
-  const negar = () => res.status(403).json({ erro: 'O perfil Membro tem acesso somente à Carteira de notas e à consulta da Malha fina' });
-  if (metodo === 'GET' && ['/auth/me','/carteira','/carteira/configuracao'].includes(caminho)) return next();
+  const negar = () => res.status(403).json({ erro: 'O perfil Membro tem acesso a Todas as notas, Pendentes de lançamento, Filas e compromisso e à consulta da Malha fina' });
+  if (metodo === 'GET' && [
+    '/auth/me', '/referencias', '/documentos', '/pendentes-lancamento',
+    '/pendentes-lancamento/diagnostico', '/filas', '/filas/dia', '/carteira', '/carteira/configuracao',
+  ].includes(caminho)) return next();
+  // A consulta de Todas as notas inclui os detalhes e arquivos, mesmo fora da carteira.
+  if (metodo === 'GET' && /^\/documentos\/[1-9]\d*(?:\/navegacao)?$/.test(caminho)) return next();
+  if (metodo === 'GET' && /^\/anexos\/[1-9]\d*\/arquivo$/.test(caminho)) return next();
   if (metodo === 'POST' && ['/auth/logout','/auth/senha','/exportar'].includes(caminho)) return next();
   if (metodo === 'GET' && /^\/malha-fina(?:\/pj|\/[1-9]\d*)?$/.test(caminho)) return next();
   const nota = caminho.match(/^\/carteira\/([1-9]\d*)(\/historico)?$/);
@@ -98,11 +104,6 @@ async function acessoMembro(req, res, next) {
     const ativa = get('SELECT responsavel_id FROM carteira_notas WHERE id = ? AND excluida_em IS NULL', [Number(nota[1])]);
     if (!ativa) return negar();
     return next();
-  }
-  const anexo = caminho.match(/^\/anexos\/([1-9]\d*)\/arquivo$/);
-  if (metodo === 'GET' && anexo) {
-    const { anexoPermitidoCarteira } = await import('./erp/carteira.js');
-    if (anexoPermitidoCarteira(Number(anexo[1]))) return next();
   }
   return negar();
 }

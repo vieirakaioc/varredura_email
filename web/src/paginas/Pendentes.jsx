@@ -98,18 +98,17 @@ export default function Pendentes() {
   const { usuario } = useAuth();
   const [params] = useSearchParams();
   const aba = params.get('aba');
-  if (usuario.perfil === 'membro') {
-    const consulta = new URLSearchParams(params);
-    consulta.delete('aba');
-    const sufixo = consulta.toString();
-    return <Navigate to={aba === 'malha' ? `/malha-fina${sufixo ? `?${sufixo}` : ''}` : '/carteira'} replace />;
+  if (usuario.perfil === 'membro' && aba && !['pendentes', 'filas', 'malha'].includes(aba)) {
+    return <Navigate to="/pendentes" replace />;
   }
   const painel = aba === 'lancamentos' ? <Lancamentos /> : aba === 'malha' ? <MalhaFina /> : aba === 'filas' ? <FilasCompromisso /> : <PainelPendentes />;
   return <ComAbas>{painel}</ComAbas>;
 }
 
-/** Cabeçalho comum das duas visões: o que falta lançar e quem está lançando. */
+/** Cabeçalho das consultas de lançamento, respeitando as abas de cada perfil. */
 function ComAbas({ children }) {
+  const { usuario } = useAuth();
+  const membro = usuario.perfil === 'membro';
   const [params, setParams] = useSearchParams();
   const aba = params.get('aba') ?? 'pendentes';
   // Cada aba lembra os próprios filtros: trocar de aba (ou de tela) não zera o que estava filtrado
@@ -120,11 +119,11 @@ function ComAbas({ children }) {
   };
   return (
     <>
-      <Topo titulo="Lançamento de notas" descricao="XMLs recebidos no Senior, o que falta lançar e a produtividade da equipe." />
+      <Topo titulo="Lançamento de notas" descricao={membro ? 'Notas pendentes, filas e compromissos da equipe e conferência da Malha fina.' : 'XMLs recebidos no Senior, o que falta lançar e a produtividade da equipe.'} />
       <div className="pagina">
         <div className="abas" style={{ padding: 0 }}>
           <button className={aba === 'pendentes' ? 'ativa' : ''} onClick={() => trocarAba('pendentes')}>Pendentes de lançamento</button>
-          <button className={aba === 'lancamentos' ? 'ativa' : ''} onClick={() => trocarAba('lancamentos')}>Produtividade do lançamento</button>
+          {!membro && <button className={aba === 'lancamentos' ? 'ativa' : ''} onClick={() => trocarAba('lancamentos')}>Produtividade do lançamento</button>}
           <button className={aba === 'filas' ? 'ativa' : ''} onClick={() => trocarAba('filas')}>Filas e compromisso</button>
           <button className={aba === 'malha' ? 'ativa' : ''} onClick={() => trocarAba('malha')}>Malha fina</button>
         </div>

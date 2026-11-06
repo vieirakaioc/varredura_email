@@ -170,7 +170,7 @@ test('migração permite membro e preserva usuários, sessões e referências ex
   assert.deepEqual(all('PRAGMA foreign_key_check'), []);
 });
 
-test('membro autentica e recebe somente permissões da carteira, leitura da malha e exportação', async () => {
+test('membro autentica com leitura das notas e pendentes sem permissões de gestão', async () => {
   const login = await json('/auth/login', 'membro', {
     method: 'POST', token: null, corpo: { email: 'membro@acesso.teste', senha },
   });
@@ -179,11 +179,91 @@ test('membro autentica e recebe somente permissões da carteira, leitura da malh
   assert.equal(typeof login.corpo.token, 'string');
   const me = await json('/auth/me');
   assert.equal(me.status, 200);
-  for (const p of ['carteira_ver', 'carteira_operar', 'malha_ver', 'exportar']) assert.ok(me.corpo.permissoes.includes(p), p);
-  for (const p of ['ver', 'decidir', 'administrar', 'carteira_gerir', 'relatorios', 'financeiro']) {
+  for (const p of ['ver', 'carteira_ver', 'carteira_operar', 'malha_ver', 'exportar']) assert.ok(me.corpo.permissoes.includes(p), p);
+  for (const p of ['decidir', 'administrar', 'carteira_gerir', 'relatorios', 'financeiro', 'pagamentos', 'historico', 'ia']) {
     assert.ok(!me.corpo.permissoes.includes(p), p);
   }
   assert.equal((await json('/carteira', 'membro', { token: null })).status, 401);
+});
+
+test('membro consulta Todas as notas, detalhes e referências sem aprovar, pagar ou acessar histórico', async () => {
+  const lista = await json('/documentos');
+  assert.equal(lista.status, 200);
+  assert.ok(lista.corpo.itens.some((d) => d.id === docAtivo));
+  assert.ok(lista.corpo.itens.some((d) => d.id === docFora));
+  const filtrada = await json(`/documentos?numero=${get('SELECT numero FROM documentos WHERE id = ?', [docFora]).numero}`);
+  assert.equal(filtrada.status, 200);
+  assert.deepEqual(filtrada.corpo.itens.map((d) => d.id), [docFora]);
+  for (const id of [docAtivo, docExcluido, docFora]) {
+    const detalhe = await json(`/documentos/${id}`);
+    assert.equal(detalhe.status, 200);
+    assert.equal(detalhe.corpo.documento.id, id);
+    assert.deepEqual(detalhe.corpo.permissoes, { decidir: false, ia: false, pagamentos: false });
+    assert.equal(detalhe.corpo.decisoes, null);
+    assert.equal(detalhe.corpo.alteracoes, null);
+    assert.equal((await json(`/documentos/${id}/navegacao`)).status, 200);
+  }
+  const refs = await json('/referencias');
+  assert.equal(refs.status, 200);
+  assert.ok(Array.isArray(refs.corpo.empresas));
+  assert.ok(Array.isArray(refs.corpo.usuarios));
+  assert.ok(Array.isArray(refs.corpo.caixas));
+  assert.equal((await json('/DOCUMENTOS/')).status, 200);
+  const head = await requisitar('/documentos', 'membro', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal((await json('/documentos/999999')).status, 404);
+  assert.equal((await json('/documentos', 'membro', { token: null })).status, 401);
+});
+
+test('membro consulta pendentes e dashboard das filas sem conexão real ao Senior', async (t) => {
+  const mssql = (await import('mssql')).default;
+  const { limparCache } = await import('../src/erp/cache.js');
+  const variaveis = ['SENIOR_DB_TIPO', 'SENIOR_DB_HOST', 'SENIOR_DB_USUARIO'];
+  const anteriores = Object.fromEntries(variaveis.map((v) => [v, process.env[v]]));
+  const consultas = [];
+  // A conexão é substituída antes de habilitar o ERP: nenhuma consulta abre sockets.
+  t.mock.method(mssql.ConnectionPool.prototype, 'connect', async () => ({
+    connected: true,
+    request() {
+      return {
+        input() { return this; },
+        async query(sql) {
+          consultas.push(sql);
+          assert.match(sql, /^\s*SELECT\b/i);
+          return { recordset: [] };
+        },
+      };
+    },
+  }));
+  t.after(() => {
+    for (const v of variaveis) {
+      if (anteriores[v] === undefined) delete process.env[v];
+      else process.env[v] = anteriores[v];
+    }
+    limparCache();
+  });
+  process.env.SENIOR_DB_TIPO = 'mssql';
+  process.env.SENIOR_DB_HOST = 'erp-inexistente.acesso.teste';
+  process.env.SENIOR_DB_USUARIO = 'somente-teste';
+  limparCache();
+
+  const pendentes = await json('/pendentes-lancamento?mes=2026-10&incluir_nfse=0&forcar=1');
+  assert.equal(pendentes.status, 200, JSON.stringify(pendentes.corpo));
+  assert.equal(pendentes.corpo.indicadores.pendentes, 0);
+  assert.deepEqual(pendentes.corpo.itens, []);
+  const diagnostico = await json(`/pendentes-lancamento/diagnostico?busca=${'1'.repeat(44)}`);
+  assert.equal(diagnostico.status, 200, JSON.stringify(diagnostico.corpo));
+  assert.deepEqual(diagnostico.corpo.notas, []);
+  const filas = await json('/filas');
+  assert.equal(filas.status, 200);
+  assert.ok(filas.corpo.categorias.length > 0);
+  const dia = await json('/filas/dia?dia=2026-10-22&forcar=1');
+  assert.equal(dia.status, 200, JSON.stringify(dia.corpo));
+  assert.equal(dia.corpo.dia, '2026-10-22');
+  assert.equal(dia.corpo.dashboard.notas_lancadas.estado, 'ok');
+  assert.deepEqual(dia.corpo.dashboard.avisos, []);
+  assert.ok(consultas.some((sql) => sql.includes('FROM E000NFC')));
+  assert.ok(consultas.some((sql) => sql.includes('FROM E440NFC')));
 });
 
 test('membro visualiza carteira e configuração necessária, inclusive responsáveis membros', async () => {
@@ -226,12 +306,13 @@ test('membro consulta lotes, notas e prestadores PJ da malha fina sem consultar 
 
 test('membro recebe bloqueio no servidor para demais páginas e gestão da carteira', async () => {
   for (const caminho of [
-    '/dashboard', '/documentos', `/documentos/${docAtivo}`, '/fila', '/usuarios', '/referencias',
+    '/dashboard', '/fila', '/usuarios',
     '/empresas', '/fornecedores', '/caixas', '/emails', '/regras', '/configuracoes', '/auditoria',
     '/logs-processamento', '/financeiro', '/relatorios', '/senior', '/sefaz',
-    '/integracoes', '/pendentes-lancamento', '/lancamentos',
-    '/filas', '/filas/dia', '/filas/sugestao', '/carteira/importacoes', '/carteira/importacoes/1/exclusao',
-    '/CARTEIRA/IMPORTACOES/', '/DOCUMENTOS/', '/%64ocumentos', '/carteira/configuracao/extra',
+    '/integracoes', '/lancamentos', '/lancamentos/historico',
+    '/filas/sugestao', '/carteira/importacoes', '/carteira/importacoes/1/exclusao',
+    '/CARTEIRA/IMPORTACOES/', '/%64ocumentos', '/carteira/configuracao/extra',
+    '/documentos/0', '/documentos/abc', '/documentos/1/extra', '/anexos/1/extra', '/pendentes-lancamento/extra',
     '/carteira/importacoes?visao=todas',
   ]) await deveNegar(caminho);
   for (const [method, caminho, corpo] of [
@@ -239,6 +320,8 @@ test('membro recebe bloqueio no servidor para demais páginas e gestão da carte
     ['DELETE', '/carteira/importacoes/1?versao=' + 'a'.repeat(64)],
     ['PUT', '/carteira/filial', { empfil: '1/2', usuario_id: membro }],
     ['POST', '/carteira/conferir', {}], ['PUT', '/filas', { filas: {} }],
+    ['PUT', '/filas/dia', { dia: '2026-10-22', itens: [] }],
+    ['PUT', '/pendentes-lancamento/motivo', { chave: '1'.repeat(44), motivo: 'outros', observacao: 'teste' }],
     ['POST', '/usuarios', { nome: 'Intruso', email: 'intruso@acesso.teste', perfil: 'admin', senha }],
     ['PUT', `/usuarios/${membro}`, { perfil: 'admin' }],
     ['POST', `/documentos/${docAtivo}/acoes`, { acao: 'APROVAR' }],
@@ -285,17 +368,18 @@ test('membro altera andamento e bloqueio de qualquer nota ativa, sem reprogramar
   assert.equal(versaoAntiga.status, 409);
 });
 
-test('membro abre somente nota e boleto PDF vinculados a notas ativas da carteira', async () => {
-  for (const id of [pdfNota, boleto, pdfPonteiro]) {
+test('membro abre PDFs e XMLs de Todas as notas, inclusive documentos fora da carteira', async () => {
+  for (const id of [pdfNota, boleto, pdfPonteiro, pdfSemClassificacao, pdfExcluido, pdfFora]) {
     const r = await requisitar(`/anexos/${id}/arquivo`);
     assert.equal(r.status, 200, `PDF ${id}`);
     assert.match(r.headers.get('content-type'), /application\/pdf/);
     assert.match(await r.text(), /^%PDF-/);
   }
-  for (const id of [xml, pdfSemClassificacao, pdfExcluido, pdfFora, 999999]) {
-    const r = await json(`/anexos/${id}/arquivo`);
-    assert.ok([403, 404].includes(r.status), `Anexo ${id}: ${r.status}`);
-  }
+  const xmlRecebido = await requisitar(`/anexos/${xml}/arquivo`);
+  assert.equal(xmlRecebido.status, 200);
+  assert.match(xmlRecebido.headers.get('content-type'), /application\/xml/);
+  assert.equal(await xmlRecebido.text(), '<nfe>teste</nfe>');
+  assert.equal((await json('/anexos/999999/arquivo')).status, 404);
   const r = await requisitar(`/anexos/${pdfFora}/arquivo`, 'admin');
   assert.equal(r.status, 200);
   await r.arrayBuffer();
@@ -326,7 +410,10 @@ test('administrador mantém acesso completo e pode criar ou alterar usuários pa
   assert.equal((await json('/documentos', 'admin', { token })).status, 200);
   const rebaixamento = await json(`/usuarios/${nova.corpo.id}`, 'admin', { method: 'PUT', corpo: { perfil: 'membro' } });
   assert.equal(rebaixamento.status, 200);
-  assert.equal((await json('/documentos', 'membro', { token })).status, 403);
+  assert.equal((await json('/documentos', 'membro', { token })).status, 200);
+  assert.equal((await json('/dashboard', 'membro', { token })).status, 403);
+  assert.equal((await json('/lancamentos', 'membro', { token })).status, 403);
+  assert.equal((await json('/lancamentos/historico', 'membro', { token })).status, 403);
   assert.equal((await json('/carteira', 'membro', { token })).status, 200);
   const n = get('SELECT * FROM carteira_notas WHERE id = ?', [notaOutro]);
   const programacao = await json(`/carteira/${notaOutro}`, 'admin', { method: 'PUT', corpo: { prioridade: 1, versao: n.atualizado_em } });

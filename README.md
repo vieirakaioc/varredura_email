@@ -161,17 +161,22 @@ A prioridade na fila leva em conta erros, valor, cancelamento e **vencimento das
 | Perfil | Pode |
 |---|---|
 | Administrador | tudo (cadastros, regras, caixas, usuários, integrações) |
-| Membro | Carteira de notas e consulta da Malha fina: vê a programação e os PDFs, registra andamento/bloqueio apenas das notas atribuídas a ele |
+| Membro | Consulta Todas as notas e Pendentes de lançamento, Filas e compromisso e Malha fina; registra andamento/bloqueio na carteira |
 | Fiscal | visualizar, validar e aprovar, tratar alertas e escrituração, relatórios |
 | Consulta | somente visualização (sem histórico) |
 | Auditor | visualização, histórico, relatórios e trilha de auditoria |
 | Financeiro | painel de contas a pagar e registro de programação/pagamento. Pagar título de NF não aprovada exige justificativa. |
 
 Para o acesso restrito da equipe, selecione **Membro** em **Usuários → Perfil de acesso**.
-Esse é o perfil padrão ao criar novos usuários. O membro entra diretamente em `/carteira`
-e pode consultar `/malha-fina`; os demais menus e abas não ficam disponíveis. O servidor também bloqueia as APIs de outras
-páginas, importações, exclusões, configuração de responsáveis e alterações de prazo/prioridade.
-Os PDFs acessíveis ao membro são apenas os vinculados a notas ativas da carteira. O administrador
+Esse é o perfil padrão ao criar novos usuários. O membro entra em **Pendentes de lançamento**
+e também encontra **Todas as notas** no menu. Dentro de Pendentes, ficam disponíveis somente
+**Pendentes de lançamento**, **Filas e compromisso** e **Malha fina**. A aba **Produtividade do
+lançamento** não fica disponível, inclusive por link direto. Em Filas, o membro consulta a carteira
+e o dashboard de compromissos. Os links antigos `/carteira` e `/malha-fina` continuam disponíveis.
+O servidor também bloqueia as APIs das demais páginas, importações, exclusões, configuração
+de responsáveis e alterações de prazo/prioridade.
+Em Todas as notas, o membro consulta detalhes e abre os anexos, mesmo de notas fora da carteira,
+sem permissão para aprovar, editar, registrar pagamentos ou executar ações de IA. O administrador
 mantém acesso completo; os perfis anteriores continuam disponíveis para compatibilidade.
 Mudanças de perfil valem para a próxima requisição, inclusive em sessões já abertas.
 Senhas de acesso podem conter qualquer texto não vazio, sem tamanho mínimo ou combinação

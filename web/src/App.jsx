@@ -39,8 +39,8 @@ const MENU = [
   { para: '/auditoria', rotulo: 'Auditoria', icone: 'auditoria', permissao: 'auditoria' },
 ];
 const MENU_MEMBRO = [
-  { para: '/carteira', rotulo: 'Carteira de notas', icone: 'fila' },
-  { para: '/malha-fina', rotulo: 'Malha fina', icone: 'auditoria' },
+  { para: '/documentos', rotulo: 'Todas as notas', icone: 'docs' },
+  { para: '/pendentes', rotulo: 'Pendentes de lançamento', icone: 'painel' },
 ];
 
 function PaginaCarteira() {
@@ -204,12 +204,12 @@ export default function App() {
           <Route path="/carteira" element={<PaginaCarteira />} />
           <Route path="/malha-fina" element={<PaginaMalhaFina />} />
           <Route path="/pendentes" element={<Pendentes />} />
-          {membro ? <Route path="*" element={<Navigate to="/carteira" replace />} /> : <>
+          <Route path="/documentos" element={<Documentos />} />
+          <Route path="/documentos/:id" element={<Documento />} />
+          {membro ? <Route path="*" element={<Navigate to="/pendentes" replace />} /> : <>
           {/* Tela inicial: o que falta lançar no Senior */}
           <Route path="/" element={<Navigate to="/pendentes" replace />} />
           <Route path="/painel" element={<Dashboard />} />
-          <Route path="/documentos" element={<Documentos />} />
-          <Route path="/documentos/:id" element={<Documento />} />
           <Route path="/caixas" element={<Caixas />} />
           <Route path="/caixas/emails/:id" element={<Caixas />} />
           <Route path="/sefaz" element={<Sefaz />} />
