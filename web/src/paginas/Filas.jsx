@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
 import { useAuth } from '../contexto.jsx';
-import { BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
+import { BotaoExportar, COR_CATEGORIA, Campo, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
 import Carteira from './Carteira.jsx';
 
 const hoje = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
@@ -20,7 +20,13 @@ const BLOCO = { fiscal: 'Escrita Fiscal', supervisao: 'Supervisão', outros: 'Ou
  * e o compromisso de produção do dia. Nada vira status ou apontamento por nota no ERP.
  */
 export default function Filas() {
-  const [visao, setVisao] = useState('carteira');
+  const [params, setParams] = useSearchParams();
+  const visao = params.get('visao_filas') === 'dashboard' ? 'compromissos' : 'carteira';
+  const setVisao = (alvo) => {
+    const p = new URLSearchParams(params);
+    if (alvo === 'compromissos') p.set('visao_filas', 'dashboard'); else p.delete('visao_filas');
+    setParams(p);
+  };
   return <>
     <div className="linha" style={{ gap: 8, marginBottom: 12 }}>
       <button className={`btn pequeno ${visao === 'carteira' ? '' : 'ghost'}`} onClick={() => setVisao('carteira')}>Carteira de notas</button>
@@ -35,19 +41,29 @@ function Compromissos() {
   const editar = pode('decidir');
   const [params, setParams] = useSearchParams();
   const dia = params.get('dia') || hoje();
+  const empresa = params.get('empresa_filas') || '';
+  const empfil = params.get('filial_filas') || '';
+  const recortado = Boolean(empresa || empfil);
+  const setFiltro = (campo, valor) => {
+    const p = new URLSearchParams(params);
+    if (valor) p.set(campo, valor); else p.delete(campo);
+    if (campo === 'empresa_filas' && valor && empfil.split('/')[0] !== valor) p.delete('filial_filas');
+    setParams(p);
+  };
   const avisar = useToast();
   const [editando, setEditando] = useState(false);
   const [verDetalhe, setVerDetalhe] = useState(false);
 
   const filas = useDados(() => api.get('/filas'), [], { automatico: false });
-  const painel = useDados(({ forcar } = {}) => api.get(`/filas/dia${qs({ dia, forcar: forcar ? '1' : '' })}`), [dia], { automatico: false, memoria: 'filas-dia' });
+  const painel = useDados(({ forcar } = {}) => api.get(`/filas/dia${qs({ dia, empresa, empfil, forcar: forcar ? '1' : '' })}`),
+    [dia, empresa, empfil], { automatico: false, memoria: 'filas-dia-empresas-v1' });
   const [linhas, setLinhas] = useState(null);     // compromisso em edição
   const [sugestao, setSugestao] = useState(null);
 
-  useEffect(() => { setLinhas(null); setSugestao(null); }, [dia]);
+  useEffect(() => { setLinhas(null); setSugestao(null); }, [dia, empresa, empfil]);
 
   const sugerir = async () => {
-    if (!editar) return;
+    if (!editar || recortado) return;
     try {
       const s = await api.get(`/filas/sugestao${qs({ dia })}`);
       setSugestao(s);
@@ -56,7 +72,7 @@ function Compromissos() {
     } catch (e) { avisar(e.message, 'erro'); }
   };
   const gravar = async () => {
-    if (!editar) return;
+    if (!editar || recortado) return;
     try {
       const r = await api.put('/filas/dia', { dia, itens: linhas ?? [] });
       avisar(`Compromisso de ${data(dia)} gravado (${numero(r.gravados)} linha(s))`, 'ok');
@@ -64,11 +80,13 @@ function Compromissos() {
     } catch (e) { avisar(e.message, 'erro'); }
   };
 
-  const d = painel.dados;
+  const d = painel.trocando ? null : painel.dados;
+  const opcoes = painel.dados?.filtros_disponiveis ?? {};
+  const filiais = (opcoes.filiais ?? []).filter((f) => !empresa || f.empresa === empresa);
   const k = d?.indicadores;
   const producaoOk = d?.dashboard?.notas_lancadas?.estado === 'ok';
   const doTime = (d?.linhas ?? []).filter((l) => l.equipe === 'fiscal');
-  const foraDaFila = doTime.filter((l) => l.compromisso == null && l.realizado > 0);
+  const foraDaFila = recortado ? [] : doTime.filter((l) => l.compromisso == null && l.realizado > 0);
 
   // Quadro: uma coluna por fila, uma barra por pessoa. É o que fica projetado na reunião de 10 minutos.
   const quadro = (filas.dados?.categorias ?? [])
@@ -94,8 +112,21 @@ function Compromissos() {
             <strong className="muted pequeno">Dia</strong>
             <input type="date" value={dia} onChange={(e) => { const p = new URLSearchParams(params); p.set('dia', e.target.value || hoje()); setParams(p); }} />
           </label>
-          {editar && <button className="btn pequeno" onClick={sugerir}>Sugerir compromisso</button>}
-          {editar && linhas && <button className="btn pequeno" onClick={gravar}>Gravar compromisso</button>}
+          <Campo rotulo="Empresa"><select aria-label="Filtrar empresa do dashboard" value={empresa} onChange={(e) => setFiltro('empresa_filas', e.target.value)}>
+            <option value="">Todas as empresas</option>
+            {empresa && !(opcoes.empresas ?? []).some((f) => f.chave === empresa) && <option value={empresa}>Empresa {empresa}</option>}
+            {(opcoes.empresas ?? []).map((f) => <option key={f.chave} value={f.chave}>{f.rotulo}</option>)}
+          </select></Campo>
+          <Campo rotulo="Filial"><select aria-label="Filtrar filial do dashboard" value={empfil} onChange={(e) => setFiltro('filial_filas', e.target.value)}>
+            <option value="">Todas as filiais</option>
+            {empfil && !filiais.some((f) => f.chave === empfil) && <option value={empfil}>{empfil}</option>}
+            {filiais.map((f) => <option key={f.chave} value={f.chave}>{f.rotulo}</option>)}
+          </select></Campo>
+          {recortado && <button className="btn pequeno ghost" onClick={() => {
+            const p = new URLSearchParams(params); p.delete('empresa_filas'); p.delete('filial_filas'); setParams(p);
+          }}>Limpar filtros</button>}
+          {editar && !recortado && <button className="btn pequeno" onClick={sugerir}>Sugerir compromisso</button>}
+          {editar && !recortado && linhas && <button className="btn pequeno" onClick={gravar}>Gravar compromisso</button>}
           {linhas && <button className="btn pequeno ghost" onClick={() => { setLinhas(null); setSugestao(null); }}>Cancelar</button>}
           <button className="btn pequeno ghost" onClick={() => painel.recarregar()}>Atualizar</button>
           <span className="espaco" />
@@ -114,13 +145,18 @@ function Compromissos() {
         )}
       </Cartao>
 
+      {recortado && <div className="aviso pequeno" role="status" style={{ marginBottom: 12 }}>
+        Exibindo {empresa ? `Empresa ${empresa}` : 'todas as empresas'}{empfil ? ` · filial ${empfil}` : ' · todas as filiais'}.
+        {' '}Os compromissos são gerais, por pessoa e tipo de nota. Para acompanhá-los ou alterá-los, selecione todas as empresas e filiais.
+      </div>}
+
       <Erro erro={filas.erro ?? painel.erro} />
       {editar && editando && <ConfiguracaoFilas filas={filas} avisar={avisar} />}
 
       {painel.carregando && !d ? <Carregando /> : d && (
         <>
           <IndicadoresDashboard painel={d} dia={dia} />
-          <Placar k={k} falta={falta} fora={foraDaFila.reduce((s, l) => s + l.realizado, 0)} disponivel={producaoOk} />
+          {!recortado && <Placar k={k} falta={falta} fora={foraDaFila.reduce((s, l) => s + l.realizado, 0)} disponivel={producaoOk} />}
 
           {sugestao && (
             <Cartao titulo="Sugestão do dia" sub="distribui as pendências em aberto pela capacidade de cada pessoa">
@@ -142,7 +178,7 @@ function Compromissos() {
               {producaoOk
                 ? <>Nada combinado nem lançado pelo time em {data(dia)}.</>
                 : 'A produção está indisponível no momento.'}
-              {editar && <> Use <strong>Sugerir compromisso</strong> para montar o quadro do dia.</>}
+              {editar && !recortado && <> Use <strong>Sugerir compromisso</strong> para montar o quadro do dia.</>}
             </p></Cartao>
           )}
 
@@ -183,7 +219,7 @@ function Compromissos() {
                         </>
                       ) : (
                         <>
-                          <td className="num">{l.compromisso != null ? <strong>{numero(l.compromisso)}</strong> : <span className="muted">A definir</span>}</td>
+                          <td className="num">{l.compromisso != null ? <strong>{numero(l.compromisso)}</strong> : <span className="muted">{recortado ? '—' : 'A definir'}</span>}</td>
                           <td className="num">{producaoOk ? numero(l.realizado) : '—'}</td>
                           <td className="num" style={{ color: l.diferenca == null ? undefined : l.diferenca >= 0 ? 'var(--status-bom)' : 'var(--status-critico)' }}>
                             {!producaoOk || l.diferenca == null ? <span className="muted">—</span> : `${l.diferenca > 0 ? '+' : ''}${numero(l.diferenca)}`}
@@ -195,7 +231,7 @@ function Compromissos() {
                   ))}
                   {!(linhas ?? doTime).length && (
                     <tr><td colSpan={6} className="muted" style={{ padding: 16 }}>
-                      Nada combinado nem lançado neste dia. Use “Sugerir compromisso”.
+                      {recortado ? 'Nenhum lançamento para a empresa e filial selecionadas.' : 'Nada combinado nem lançado neste dia. Use “Sugerir compromisso”.'}
                     </td></tr>
                   )}
                 </tbody>
@@ -242,6 +278,7 @@ function IndicadoresDashboard({ painel, dia }) {
   const pendenciasOk = pendencias.estado === 'ok';
   const antigosOk = antigos.estado === 'ok';
   const k = painel.indicadores;
+  const recortado = Boolean(painel.filtros?.empresa || painel.filtros?.empfil);
   const cumprimento = producaoOk ? k.cumprimento : null;
   const maisAntiga = (antigos.itens ?? []).filter((i) => i.recebido_em).slice()
     .sort((a, b) => String(a.recebido_em).localeCompare(String(b.recebido_em)))[0];
@@ -276,8 +313,8 @@ function IndicadoresDashboard({ painel, dia }) {
         <Kpi rotulo="Pendências atuais" valor={pendenciasOk ? numero(pendencias.total) : 'Indisponível'}
           detalhe={pendenciasOk ? `VIA · consulta em ${dataConsulta(pendencias.consultado_em)}` : 'Não foi possível consultar a fila atual'}
           titulo={pendencias.fonte} cor="var(--status-atencao)" />
-        <Kpi rotulo="Cumprimento do dia" valor={!producaoOk ? 'Indisponível' : cumprimento == null ? 'A definir' : `${numero(cumprimento)}%`}
-          detalhe={k.compromisso != null ? `${numero(k.compromisso)} notas combinadas · por pessoa e tipo` : 'Sem compromisso registrado para o dia'}
+        <Kpi rotulo="Cumprimento do dia" valor={recortado ? 'Visão geral' : !producaoOk ? 'Indisponível' : cumprimento == null ? 'A definir' : `${numero(cumprimento)}%`}
+          detalhe={recortado ? 'Disponível ao selecionar todas as empresas e filiais' : k.compromisso != null ? `${numero(k.compromisso)} notas combinadas · por pessoa e tipo` : 'Sem compromisso registrado para o dia'}
           cor={cumprimento == null ? undefined : cumprimento >= 100 ? 'var(--status-bom)' : 'var(--status-atencao)'} />
         <Kpi rotulo="Documento mais antigo" valor={!antigosOk ? 'Indisponível' : maisAntiga ? `${numero(maisAntiga.dias)} dia(s)` : '—'}
           detalhe={maisAntiga ? `Recebido no VIA em ${data(maisAntiga.recebido_em)}` : antigosOk ? 'Sem pendência com data de recebimento válida' : 'Data de recebimento indisponível'}
@@ -306,7 +343,7 @@ function IndicadoresDashboard({ painel, dia }) {
           <tbody>
             {producaoOk && (todasPessoas ? pessoas : pessoas.slice(0, 10)).map((i) => <tr key={`${i.usuario}|${i.categoria}`}>
               <td>{i.usuario}</td><td className="pequeno muted">{BLOCO[i.equipe] ?? i.equipe}</td><td>{i.categoria_rotulo}</td>
-              <td className="num"><strong>{numero(i.realizado)}</strong></td><td className="num">{i.compromisso == null ? 'A definir' : numero(i.compromisso)}</td>
+              <td className="num"><strong>{numero(i.realizado)}</strong></td><td className="num">{i.compromisso == null ? recortado ? '—' : 'A definir' : numero(i.compromisso)}</td>
               <td className="num" style={{ color: i.diferenca == null ? undefined : i.diferenca >= 0 ? 'var(--status-bom)' : 'var(--status-critico)' }}>{i.diferenca == null ? '—' : `${i.diferenca > 0 ? '+' : ''}${numero(i.diferenca)}`}</td>
               <td className="num">{i.compromisso > 0 ? `${numero(i.realizado / i.compromisso * 100)}%` : '—'}</td>
             </tr>)}

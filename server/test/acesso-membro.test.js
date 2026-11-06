@@ -262,6 +262,11 @@ test('membro consulta pendentes e dashboard das filas sem conexão real ao Senio
   assert.equal(dia.corpo.dia, '2026-10-22');
   assert.equal(dia.corpo.dashboard.notas_lancadas.estado, 'ok');
   assert.deepEqual(dia.corpo.dashboard.avisos, []);
+  const recortado = await json('/filas/dia?dia=2026-10-22&empresa=1&empfil=1/2');
+  assert.equal(recortado.status, 200);
+  assert.deepEqual(recortado.corpo.filtros, { empresa: '1', empfil: '1/2' });
+  assert.deepEqual(recortado.corpo.filtros_disponiveis, { empresas: [], filiais: [] });
+  assert.equal(recortado.corpo.indicadores.compromisso, null);
   assert.ok(consultas.some((sql) => sql.includes('FROM E000NFC')));
   assert.ok(consultas.some((sql) => sql.includes('FROM E440NFC')));
 });

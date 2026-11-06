@@ -204,7 +204,7 @@ rotasErpAdmin.get('/filas/sugestao', permitir('ver'), async (req, res) => {
 });
 rotasErpAdmin.get('/filas/dia', permitir('ver'), async (req, res) => {
   const { painelDoDia } = await import('../erp/filas.js');
-  try { res.json(await painelDoDia(req.query.dia, { forcar: req.query.forcar === '1' })); } catch (e) { erroSenior(res, e); }
+  try { res.json(await painelDoDia(req.query.dia, { forcar: req.query.forcar === '1', empresa: req.query.empresa, empfil: req.query.empfil })); } catch (e) { erroSenior(res, e); }
 });
 rotasErpAdmin.put('/filas/dia', permitir('decidir'), async (req, res) => {
   const { salvarCompromisso } = await import('../erp/filas.js');

@@ -9,7 +9,7 @@ process.env.DATA_DIR = tmp;
 process.env.APP_SECRET = 'teste-dashboard-filas';
 process.env.SENIOR_DB_TIPO = '';
 const { db } = await import('../src/db/index.js');
-const { agregarProducaoDia, agregarPendenciasDashboard } = await import('../src/erp/filas.js');
+const { agregarProducaoDia, agregarPendenciasDashboard, opcoesFiltrosDashboard } = await import('../src/erp/filas.js');
 after(() => {
   db.close();
   assert.equal(path.dirname(path.resolve(tmp)), path.resolve(os.tmpdir()));
@@ -38,6 +38,72 @@ function pendente(dados = {}) {
   };
 }
 const linha = (r, usuario, categoria) => r.linhas.find((l) => l.usuario === usuario && l.categoria === categoria);
+
+test('empresa e filial recortam produção antes de somar pessoas, tipos e indicadores', () => {
+  const a = lancada({ codemp: 1, codfil: 1 });
+  const itens = [a, { ...a }, lancada({ codemp: 1, codfil: 2, categoria: 'servico' }),
+    lancada({ codemp: 2, codfil: 1, usuario: 'BRUNO', categoria: 'frete' })];
+  const combinados = [{ usuario: 'ANA', categoria: 'produto', quantidade: 8 }];
+  const empresa = producao({ itens, combinados, filtros: { empresa: '1' } });
+  assert.equal(empresa.notas_lancadas.total, 2);
+  assert.equal(empresa.indicadores.realizado_time, 2);
+  assert.equal(empresa.linhas.length, 2);
+  assert.deepEqual(empresa.composicao.map((i) => i.chave).sort(), ['produto', 'servico']);
+  assert.equal(empresa.indicadores.compromisso, null, 'o compromisso geral não pertence ao recorte');
+  assert.equal(empresa.indicadores.cumprimento, null);
+  const filial = producao({ itens, combinados, filtros: { empfil: '01/02' } });
+  assert.equal(filial.notas_lancadas.total, 1);
+  assert.equal(filial.composicao[0].chave, 'servico');
+  assert.equal(filial.composicao[0].percentual, 100);
+  const outraEmpresa = producao({ itens, filtros: { empresa: '2', empfil: '2/1' } });
+  assert.equal(outraEmpresa.notas_lancadas.total, 1);
+  assert.equal(outraEmpresa.linhas[0].usuario, 'BRUNO');
+  const conflitante = producao({ itens, filtros: { empresa: '1', empfil: '2/1' } });
+  assert.equal(conflitante.notas_lancadas.total, 0);
+  assert.deepEqual(conflitante.linhas, []);
+  assert.equal(producao({ itens, combinados }).indicadores.compromisso, 8, 'sem filtros preserva o compromisso');
+});
+
+test('filial usa empresa e código juntos e recorta pendências e antiguidade na mesma base', () => {
+  const primeira = pendente({ codemp: 1, codfil: 1, recebido_via_em: '2026-10-01' });
+  const segunda = pendente({ codemp: 1, codfil: 2, recebido_via_em: '2026-10-20', categoria: 'servico' });
+  const outra = pendente({ codemp: 2, codfil: 1, recebido_via_em: '2026-09-01' });
+  const itens = [primeira, segunda, outra, pendente({ codemp: 1, codfil: 2, cancelada: true })];
+  const empresa = agregarPendenciasDashboard(itens, consultadoEm, { empresa: '1' });
+  assert.equal(empresa.pendencias.total, 2);
+  assert.equal(empresa.antigos.total_com_data, 2);
+  assert.deepEqual(empresa.antigos.itens.map((i) => i.chave), [primeira.chave, segunda.chave]);
+  const filial = agregarPendenciasDashboard(itens, consultadoEm, { empresa: '1', empfil: '1/2' });
+  assert.equal(filial.pendencias.total, 1);
+  assert.equal(filial.pendencias.por_tipo[0].chave, 'servico');
+  assert.deepEqual(filial.antigos.itens.map((i) => i.chave), [segunda.chave]);
+  assert.equal(filial.antigos.itens[0].dias, 2);
+  const vazia = agregarPendenciasDashboard(itens, consultadoEm, { empfil: '9/1' });
+  assert.equal(vazia.pendencias.total, 0);
+  assert.deepEqual(vazia.antigos.itens, []);
+  const indisponivel = agregarPendenciasDashboard(null, consultadoEm, { empresa: '1' });
+  assert.equal(indisponivel.pendencias.total, null);
+  assert.equal(indisponivel.antigos.estado, 'indisponivel');
+});
+
+test('opções incluem filiais só com pendências e só com produção, sem duplicar ou trazer fora do escopo', () => {
+  const opcoes = opcoesFiltrosDashboard([
+    lancada({ codemp: 1, codfil: 1, empresa: 'Matriz' }),
+    lancada({ codemp: 1, codfil: 2, empresa: 'Unidade 2' }),
+    lancada({ codemp: 10, codfil: 1, empresa: 'Unidade 10' }),
+    lancada({ codemp: 7, codfil: 1, situacao: '3' }),
+    lancada({ codemp: 8, codfil: 1, geracao: '2026-10-21' }),
+  ], [
+    pendente({ codemp: '01', codfil: '01', empresa: 'Matriz' }),
+    pendente({ codemp: 2, codfil: 1, empresa: 'Somente pendências' }),
+    pendente({ codemp: 5, codfil: 1, responsavel: 'faturamento' }),
+    pendente({ codemp: 6, codfil: 1, empresa_do_grupo: false }),
+  ], dia);
+  assert.deepEqual(opcoes.empresas.map((i) => i.chave), ['1', '2', '10']);
+  assert.deepEqual(opcoes.filiais.map((i) => i.chave), ['1/1', '1/2', '2/1', '10/1']);
+  assert.equal(opcoes.filiais.find((i) => i.chave === '2/1').rotulo, '2/1 · Somente pendências');
+  assert.deepEqual(opcoes.filiais.filter((i) => i.empresa === '1').map((i) => i.chave), ['1/1', '1/2']);
+});
 
 test('produção conta documentos distintos pela identidade ERP e preserva fornecedores com o mesmo número', () => {
   const nota = lancada({ numero: 700 });

@@ -101,15 +101,43 @@ const FONTE_PRODUCAO = 'Senior · notas de entrada fechadas (E440NFC, situação
 const FONTE_PENDENCIAS = 'VIA do Senior (E000NFC) · entradas do grupo para a Escrita Fiscal, sem lançamento e sem cancelamento conhecido; não inclui planilhas da contabilidade';
 const DATA_RECEBIMENTO_VIA = 'E000NFC.DATENT (data de recebimento no VIA)';
 const nomeChave = (n) => String(n ?? '').trim().toUpperCase();
+const codigo = (v) => String(v ?? '').trim().replace(/^0+(?=\d)/, '');
+const filialChave = (v) => String(v ?? '').split('/').map(codigo).join('/');
+const noRecorte = (i, { empresa = '', empfil = '' } = {}) =>
+  (!empresa || codigo(i.codemp) === codigo(empresa))
+  && (!empfil || `${codigo(i.codemp)}/${codigo(i.codfil)}` === filialChave(empfil));
+const pendenciaFiscalAtiva = (i) => i.origem === 'senior' && i.empresa_do_grupo && i.responsavel === 'fiscal'
+  && i.tipo_movimento === 'entrada' && !i.nossa_saida && !i.lancada && !i.cancelada;
+
+/** Opções das duas fontes antes do recorte: filiais sem produção também podem ter pendências. */
+export function opcoesFiltrosDashboard(producao = [], pendencias = [], dia) {
+  const filiais = new Map();
+  const notas = [...producao.filter((i) => String(i.situacao).trim() === '2' && (!dia || i.geracao === dia)),
+    ...pendencias.filter(pendenciaFiscalAtiva)];
+  for (const i of notas) {
+    const empresa = codigo(i.codemp), filial = codigo(i.codfil);
+    if (!empresa || !filial) continue;
+    const chave = `${empresa}/${filial}`;
+    if (!filiais.has(chave)) filiais.set(chave, { chave, empresa, rotulo: `${chave} · ${i.empresa || `Filial ${filial}`}` });
+  }
+  const ordenar = (a, b) => a.chave.localeCompare(b.chave, 'pt-BR', { numeric: true });
+  return {
+    empresas: [...new Set([...filiais.values()].map((f) => f.empresa))]
+      .map((chave) => ({ chave, rotulo: `Empresa ${chave}` })).sort(ordenar),
+    filiais: [...filiais.values()].sort(ordenar),
+  };
+}
 
 /** Agregação pura: um documento do ERP vale uma nota, na sua data de lançamento. */
-export function agregarProducaoDia({ itens = [], combinados = [], escritaFiscal = [], supervisao = [], disponivel = true, dia } = {}) {
+export function agregarProducaoDia({ itens = [], combinados = [], escritaFiscal = [], supervisao = [], disponivel = true, dia, filtros = {} } = {}) {
+  // O compromisso é por pessoa/tipo, sem empresa/filial: não comparar uma produção parcial à meta geral.
+  if (filtros.empresa || filtros.empfil) combinados = [];
   const supervisores = new Set(supervisao.map(nomeChave));
   const time = new Set(escritaFiscal.map(nomeChave));
   const equipeDe = (usuario) => supervisores.has(nomeChave(usuario)) ? 'supervisao' : time.has(nomeChave(usuario)) ? 'fiscal' : 'outros';
   const distintos = new Map();
   if (disponivel) for (const [n, i] of itens.entries()) {
-    if (String(i.situacao).trim() !== '2' || (dia && i.geracao !== dia)) continue;
+    if (String(i.situacao).trim() !== '2' || (dia && i.geracao !== dia) || !noRecorte(i, filtros)) continue;
     const campos = [i.codemp, i.codfil, i.codfor, i.numero, i.serie ?? ''];
     // O caminho de produção sempre fornece a identidade completa. O fallback evita
     // agrupar documentos diferentes quando uma fonte de teste/legada não a possui.
@@ -177,15 +205,14 @@ export function agregarProducaoDia({ itens = [], combinados = [], escritaFiscal 
 }
 
 /** Agregação pura do VIA atual. A idade usa somente DATENT, sem inferir chegada pela emissão. */
-export function agregarPendenciasDashboard(itens, consultadoEm) {
+export function agregarPendenciasDashboard(itens, consultadoEm, filtros = {}) {
   if (itens == null) return {
     pendencias: { total: null, por_tipo: [], consultado_em: null, fonte: FONTE_PENDENCIAS, estado: 'indisponivel' },
     antigos: { itens: [], sem_data: null, total_com_data: null, data_referencia: DATA_RECEBIMENTO_VIA, estado: 'indisponivel' },
   };
   const distintos = new Map();
   for (const i of itens) {
-    if (i.origem !== 'senior' || !i.empresa_do_grupo || i.responsavel !== 'fiscal'
-      || i.tipo_movimento !== 'entrada' || i.nossa_saida || i.lancada || i.cancelada) continue;
+    if (!pendenciaFiscalAtiva(i) || !noRecorte(i, filtros)) continue;
     const chave = String(i.chave ?? '').trim();
     if (chave && !distintos.has(chave)) distintos.set(chave, i);
   }
@@ -217,7 +244,8 @@ export function agregarPendenciasDashboard(itens, consultadoEm) {
 }
 
 /** Compromisso do dia com produção fechada e a fotografia atual, independente do dia escolhido, do VIA. */
-export async function painelDoDia(dia = hoje(), { forcar = false } = {}) {
+export async function painelDoDia(dia = hoje(), { forcar = false, empresa = '', empfil = '' } = {}) {
+  const filtros = { empresa: codigo(empresa), empfil: empfil ? filialChave(empfil) : '' };
   const { painelLancamentos } = await import('./lancamentos.js');
   const { painelPendentes } = await import('./pendentes.js');
   const combinados = all('SELECT * FROM compromissos_dia WHERE dia = ?', [dia]);
@@ -228,15 +256,17 @@ export async function painelDoDia(dia = hoje(), { forcar = false } = {}) {
   ]);
   const agregado = agregarProducaoDia({
     dia, combinados, itens: producao.status === 'fulfilled' ? producao.value.itens : [],
-    escritaFiscal: metas.escrita_fiscal, supervisao: metas.supervisao, disponivel: producao.status === 'fulfilled',
+    escritaFiscal: metas.escrita_fiscal, supervisao: metas.supervisao, disponivel: producao.status === 'fulfilled', filtros,
   });
   const snapshot = agregarPendenciasDashboard(pendencias.status === 'fulfilled' ? pendencias.value.itens : null,
-    pendencias.status === 'fulfilled' ? pendencias.value.consultado_em : null);
+    pendencias.status === 'fulfilled' ? pendencias.value.consultado_em : null, filtros);
   const avisos = [];
   if (producao.status === 'rejected') avisos.push('Não foi possível consultar os lançamentos do Senior. Produção e cumprimento estão indisponíveis; os compromissos gravados foram preservados.');
   if (pendencias.status === 'rejected') avisos.push('Não foi possível consultar o VIA do Senior. Pendências atuais e documentos mais antigos estão indisponíveis.');
   return {
-    dia, dia_util: ehDiaUtil(dia), linhas: agregado.linhas, indicadores: agregado.indicadores,
+    dia, dia_util: ehDiaUtil(dia), linhas: agregado.linhas, indicadores: agregado.indicadores, filtros,
+    filtros_disponiveis: opcoesFiltrosDashboard(producao.status === 'fulfilled' ? producao.value.itens : [],
+      pendencias.status === 'fulfilled' ? pendencias.value.itens : [], dia),
     dashboard: { notas_lancadas: agregado.notas_lancadas, composicao: agregado.composicao, ...snapshot, avisos },
     fonte: `${FONTE_PRODUCAO}; compromisso registrado neste painel`,
     atualizado_em: new Date().toISOString(),

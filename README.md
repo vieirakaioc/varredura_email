@@ -80,6 +80,10 @@ As pendências representam a consulta atual ao VIA, limitada às entradas ativas
 Escrita Fiscal. A antiguidade usa exclusivamente o recebimento no VIA (E000NFC.DATENT); notas sem
 essa referência válida são identificadas à parte. Emissão e competência não substituem recebimento.
 Falhas em uma fonte são indicadas sem apresentar volume desconhecido como zero.
+O Dashboard de **Filas e compromisso** permite filtrar por **Empresa** e **Filial**; a empresa
+selecionada limita as opções de filial. Produção, pendências, gráficos, documentos antigos e
+exportações respeitam esses filtros. Os compromissos são gerais, por pessoa e tipo de nota:
+seu cumprimento e sua edição ficam disponíveis na visão de todas as empresas e filiais.
 Os arquivos são localizados na base de **Todas as notas** pela chave de acesso. Sem chave,
 o vínculo exige CNPJ do fornecedor, número, tipo de documento e CNPJ do tomador (e série,
 quando informada), com uma única correspondência. A exportação de Pendentes inclui o
