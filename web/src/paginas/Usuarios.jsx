@@ -5,6 +5,7 @@ import { Campo, Cartao, Carregando, data, Erro, Modal, PERFIS, Tabela, useDados,
 
 const DESCRICAO = {
   admin: 'Acesso completo: cadastros, regras, caixas de e-mail, usuários e integrações.',
+  membro: 'Acessa a Carteira de notas e consulta a Malha fina; pode abrir os PDFs e atualizar andamento ou bloqueio das notas atribuídas a ele.',
   fiscal: 'Visualiza, valida e aprova documentos; trata alertas e escrituração.',
   consulta: 'Somente visualização.',
   auditor: 'Visualização, histórico de decisões, relatórios e trilha de auditoria.',
@@ -13,7 +14,7 @@ const DESCRICAO = {
 
 function Formulario({ usuario, onFechar, onSalvo }) {
   const avisar = useToast();
-  const [f, setF] = useState({ nome: usuario.nome ?? '', email: usuario.email ?? '', perfil: usuario.perfil ?? 'fiscal', senha: '', ativo: usuario.ativo ?? 1 });
+  const [f, setF] = useState({ nome: usuario.nome ?? '', email: usuario.email ?? '', perfil: usuario.perfil ?? 'membro', senha: '', ativo: usuario.ativo ?? 1 });
   const salvar = async () => {
     try {
       if (usuario.id) await api.put(`/usuarios/${usuario.id}`, { nome: f.nome, perfil: f.perfil, ativo: Boolean(f.ativo), senha: f.senha || undefined });
@@ -28,7 +29,7 @@ function Formulario({ usuario, onFechar, onSalvo }) {
       <Campo rotulo="Perfil de acesso"><select value={f.perfil} onChange={(e) => setF({ ...f, perfil: e.target.value })}>{Object.entries(PERFIS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Campo>
       <div className="muted pequeno">{DESCRICAO[f.perfil]}</div>
       <Campo rotulo={usuario.id ? 'Nova senha (deixe vazio para manter)' : 'Senha inicial'}><input type="password" value={f.senha} onChange={(e) => setF({ ...f, senha: e.target.value })} autoComplete="new-password" /></Campo>
-      <div className="muted pequeno">Mínimo de 10 caracteres, com letras e números. As senhas são armazenadas apenas como hash (scrypt).</div>
+      <div className="muted pequeno">Pode usar qualquer senha, sem tamanho mínimo ou combinação obrigatória de caracteres.</div>
       {usuario.id && <label className="check"><input type="checkbox" checked={Boolean(f.ativo)} onChange={(e) => setF({ ...f, ativo: e.target.checked })} />Usuário ativo</label>}
     </Modal>
   );

@@ -6,6 +6,7 @@ import { hash, tokenAleatorio } from './util/cripto.js';
 
 export const PERFIS = {
   admin: 'Administrador',
+  membro: 'Membro',
   fiscal: 'Fiscal',
   consulta: 'Consulta',
   auditor: 'Auditor',
@@ -14,6 +15,11 @@ export const PERFIS = {
 
 // Permissões por perfil (item 13 da especificação + perfil Financeiro para contas a pagar).
 export const PERMISSOES = {
+  carteira_ver: ['admin', 'membro', 'fiscal', 'consulta', 'auditor', 'financeiro'],
+  carteira_operar: ['admin', 'membro', 'fiscal'],
+  carteira_gerir: ['admin', 'fiscal'],
+  malha_ver: ['admin', 'membro', 'fiscal', 'consulta', 'auditor', 'financeiro'],
+  exportar: ['admin', 'membro', 'fiscal', 'consulta', 'auditor', 'financeiro'],
   ver: ['admin', 'fiscal', 'consulta', 'auditor', 'financeiro'],
   decidir: ['admin', 'fiscal'],            // aprovar, reprovar, ignorar alerta, encaminhar, reprocessar
   financeiro: ['admin', 'fiscal', 'auditor', 'financeiro'], // painel de contas a pagar
@@ -40,8 +46,8 @@ export function conferirSenha(senha, armazenado) {
   return calc.length === esperado.length && crypto.timingSafeEqual(calc, esperado);
 }
 
-export function senhaForte(senha) {
-  return typeof senha === 'string' && senha.length >= 10 && /[A-Za-z]/.test(senha) && /\d/.test(senha);
+export function senhaValida(senha) {
+  return typeof senha === 'string' && senha.length > 0;
 }
 
 export function criarSessao(usuarioId, ip) {
@@ -71,7 +77,34 @@ export function autenticar(req, res, next) {
   if (!s || !s.ativo || s.expira_em < new Date().toISOString()) return res.status(401).json({ erro: 'Sessão expirada' });
   req.usuario = { id: s.id, nome: s.nome, email: s.email, perfil: s.perfil };
   req.token = token;
+  if (s.perfil === 'membro') return acessoMembro(req, res, next);
   next();
+}
+
+// A lista é deliberadamente fechada: endpoints antigos têm leituras sem permissão própria.
+// A restrição vale também para chamadas diretas à API e para sessões já abertas.
+async function acessoMembro(req, res, next) {
+  const caminho = req.path.toLowerCase().replace(/\/+$/, '') || '/';
+  const metodo = req.method === 'HEAD' ? 'GET' : req.method;
+  const negar = () => res.status(403).json({ erro: 'O perfil Membro tem acesso somente à Carteira de notas e à consulta da Malha fina' });
+  if (metodo === 'GET' && ['/auth/me','/carteira','/carteira/configuracao'].includes(caminho)) return next();
+  if (metodo === 'POST' && ['/auth/logout','/auth/senha','/exportar'].includes(caminho)) return next();
+  if (metodo === 'GET' && /^\/malha-fina(?:\/pj|\/[1-9]\d*)?$/.test(caminho)) return next();
+  const nota = caminho.match(/^\/carteira\/([1-9]\d*)(\/historico)?$/);
+  if (nota && ((metodo === 'GET' && nota[2]) || (metodo === 'PUT' && !nota[2]))) {
+    // Enquanto a planilha não define responsável, o membro trata qualquer nota ativa: o perfil
+    // serve para decidir as telas, não para travar a nota. Para voltar a restringir, exija
+    // ativa.responsavel_id === req.usuario.id no PUT.
+    const ativa = get('SELECT responsavel_id FROM carteira_notas WHERE id = ? AND excluida_em IS NULL', [Number(nota[1])]);
+    if (!ativa) return negar();
+    return next();
+  }
+  const anexo = caminho.match(/^\/anexos\/([1-9]\d*)\/arquivo$/);
+  if (metodo === 'GET' && anexo) {
+    const { anexoPermitidoCarteira } = await import('./erp/carteira.js');
+    if (anexoPermitidoCarteira(Number(anexo[1]))) return next();
+  }
+  return negar();
 }
 
 /** Middleware: exige uma das permissões. */

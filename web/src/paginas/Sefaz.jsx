@@ -46,9 +46,10 @@ function Canceladas() {
   const [params, setParams] = useSearchParams();
   // Padrão: só o que exige ação (lançada no Senior e ainda ativa). Cancelada e não lançada está certa.
   const filtros = { dias: params.get('dias') ?? '180', mes: params.get('mes') ?? '', ver: params.get('ver') ?? 'pendencias', pendentes: params.get('pendentes') ?? '' };
+  // Consulta pesada (cruza com o Senior): abre com a última cópia e só vai ao ERP pelo Atualizar
   const { dados, erro, carregando, recarregar } = useDados(
-    () => api.get(`/sefaz/canceladas?dias=${filtros.dias}&mes=${filtros.mes}`),
-    [filtros.dias, filtros.mes],
+    ({ forcar } = {}) => api.get(`/sefaz/canceladas?dias=${filtros.dias}&mes=${filtros.mes}${forcar ? '&forcar=1' : ''}`),
+    [filtros.dias, filtros.mes], { automatico: false, memoria: 'sefaz-canceladas' },
   );
   const [tratar, setTratar] = useState(null);
   const [obs, setObs] = useState('');

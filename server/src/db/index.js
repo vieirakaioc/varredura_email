@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { config, paths } from '../config.js';
+import { garantirPerfilMembro } from './perfil-membro.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -12,6 +13,7 @@ fs.mkdirSync(paths.anexos, { recursive: true });
 export const db = new DatabaseSync(paths.db);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 db.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+garantirPerfilMembro(db);
 
 // Migrações simples: colunas acrescentadas depois da criação do banco.
 function garantirColuna(tabela, coluna, definicao) {
@@ -42,7 +44,11 @@ garantirColuna('malha_fina_notas', 'alerta', 'TEXT');
 garantirColuna('pendencia_motivos', 'responsavel', 'TEXT');
 garantirColuna('pendencia_motivos', 'prazo', 'TEXT');
 garantirColuna('pendencia_motivos', 'retorno_em', 'TEXT');
-garantirColuna('pendencia_motivos', 'retorno_obs', 'TEXT');  // por que o casamento com o Senior é duvidoso  // codemp/codfil da filial que lançou
+garantirColuna('pendencia_motivos', 'retorno_obs', 'TEXT');
+// Carteira: por que a nota ainda não foi lançada, escolhido numa lista fechada
+garantirColuna('carteira_notas', 'motivo', 'TEXT');
+// Malha fina: endereço público da NFS-e na prefeitura, vindo da planilha da contabilidade
+garantirColuna('malha_fina_notas', 'link', 'TEXT');
 // Segundo layout da contabilidade: relatório da EFD, com chave de acesso
 garantirColuna('malha_fina_lotes', 'tipo', "TEXT NOT NULL DEFAULT 'servicos_tomados'");
 garantirColuna('malha_fina_notas', 'serie', 'TEXT');
@@ -52,6 +58,11 @@ garantirColuna('malha_fina_notas', 'status_planilha', 'TEXT');
 garantirColuna('malha_fina_notas', 'saida_numero', 'TEXT');
 garantirColuna('malha_fina_notas', 'saida_empresa', 'TEXT');
 garantirColuna('malha_fina_notas', 'saida_empresa_chave', 'TEXT');    // soma das retenções que a contabilidade informou
+garantirColuna('carteira_notas', 'tomador_nome', 'TEXT');
+garantirColuna('carteira_notas', 'tomador_cnpj', 'TEXT');
+garantirColuna('carteira_notas', 'excluida_em', 'TEXT');
+garantirColuna('carteira_importacoes', 'excluida_em', 'TEXT');
+garantirColuna('carteira_importacoes', 'excluida_por', 'INTEGER REFERENCES usuarios(id)');
 
 const cache = new Map();
 function stmt(sql) {

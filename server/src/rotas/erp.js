@@ -62,19 +62,11 @@ const erroSenior = (res, e) => res.status(502).json({
     ? 'Sem conexão com o banco do Senior (SERVERBD). Verifique a rede/firewall com o TI e tente de novo.'
     : `Consulta ao Senior falhou: ${e.message}`,
 });
-rotasErpAdmin.get('/entradas', permitir('ver'), async (req, res) => {
-  const { listarEntradas } = await import('../erp/entradas.js');
-  try { res.json(await listarEntradas(req.query)); } catch (e) { erroSenior(res, e); }
-});
 rotasErpAdmin.get('/pendentes-lancamento', permitir('ver'), async (req, res) => {
   const { painelPendentes } = await import('../erp/pendentes.js');
   try { res.json(await painelPendentes(req.query)); } catch (e) { erroSenior(res, e); }
 });
 
-rotasErpAdmin.get('/pendentes-lancamento/excecoes', permitir('ver'), async (req, res) => {
-  const { painelExcecoes } = await import('../erp/pendentes.js');
-  try { res.json(await painelExcecoes(req.query)); } catch (e) { erroSenior(res, e); }
-});
 rotasErpAdmin.put('/pendentes-lancamento/motivo', permitir('decidir'), async (req, res) => {
   const { salvarMotivo } = await import('../erp/pendentes.js');
   const r = salvarMotivo(req.body ?? {}, req.usuario.id);
@@ -88,11 +80,11 @@ rotasErpAdmin.get('/pendentes-lancamento/diagnostico', permitir('ver'), async (r
 // ------------------------------------------------------------------ malha fina (planilha da contabilidade)
 const uploadPlanilha = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-rotasErpAdmin.get('/malha-fina', permitir('ver'), async (req, res) => {
+rotasErpAdmin.get('/malha-fina', permitir('malha_ver'), async (req, res) => {
   const { listarLotes } = await import('../erp/malhafina.js');
   res.json({ lotes: listarLotes() });
 });
-rotasErpAdmin.get('/malha-fina/pj', permitir('ver'), async (req, res) => {
+rotasErpAdmin.get('/malha-fina/pj', permitir('malha_ver'), async (req, res) => {
   const { listarPj } = await import('../erp/malhafina.js');
   res.json({ pj: listarPj() });
 });
@@ -109,7 +101,7 @@ rotasErpAdmin.delete('/malha-fina/pj/:cnpj', permitir('decidir'), async (req, re
   auditar(req.usuario.id, 'malha_fina.pj_remover', 'prestador', req.params.cnpj, {}, req.ip);
   res.json(removerPj(req.params.cnpj));
 });
-rotasErpAdmin.get('/malha-fina/:id', permitir('ver'), async (req, res) => {
+rotasErpAdmin.get('/malha-fina/:id', permitir('malha_ver'), async (req, res) => {
   const { painelLote } = await import('../erp/malhafina.js');
   try { res.json(painelLote(Number(req.params.id), req.query)); } catch (e) { res.status(404).json({ erro: e.message }); }
 });
@@ -137,6 +129,66 @@ rotasErpAdmin.delete('/malha-fina/:id', permitir('decidir'), async (req, res) =>
 });
 
 // ------------------------------------------------------------------ filas por tipo e compromisso do dia
+rotasErpAdmin.get('/carteira', permitir('carteira_ver'), async (req, res) => {
+  const { listarCarteira } = await import('../erp/carteira.js');
+  res.json(listarCarteira(req.query, req.usuario.id));
+});
+rotasErpAdmin.get('/carteira/configuracao', permitir('carteira_ver'), async (req, res) => {
+  const { configuracaoCarteira } = await import('../erp/carteira.js');
+  res.json(configuracaoCarteira());
+});
+rotasErpAdmin.put('/carteira/filial', permitir('carteira_gerir'), async (req, res) => {
+  const { salvarFilialCarteira } = await import('../erp/carteira.js');
+  const r = salvarFilialCarteira(req.body ?? {});
+  auditar(req.usuario.id, 'carteira.responsavel_filial', 'filial', req.body.empfil, req.body, req.ip);
+  res.json(r);
+});
+rotasErpAdmin.post('/carteira/importar/previa', permitir('carteira_gerir'), uploadPlanilha.single('arquivo'), async (req, res) => {
+  if (!req.file || !/\.xlsx$/i.test(req.file.originalname)) return res.status(400).json({ erro: 'Envie a planilha em formato .xlsx' });
+  const { prepararImportacaoCarteira } = await import('../erp/carteira.js');
+  try {
+    res.json(await prepararImportacaoCarteira({ buffer: req.file.buffer, arquivo: req.file.originalname, dia: req.body.dia, usuarioId: req.usuario.id }));
+  } catch (e) { res.status(e.status || 400).json({ erro: `Não consegui ler a planilha: ${e.message}` }); }
+});
+rotasErpAdmin.post('/carteira/importar/:id/confirmar', permitir('carteira_gerir'), async (req, res) => {
+  const { confirmarImportacaoCarteira, preencherTomadoresCarteira } = await import('../erp/carteira.js');
+  const r = confirmarImportacaoCarteira(req.params.id, req.usuario.id);
+  auditar(req.usuario.id, 'carteira.importar', 'carteira_importacao', r.id, r.resumo, req.ip);
+  res.json(r);
+  void preencherTomadoresCarteira();
+});
+rotasErpAdmin.post('/carteira/conferir', permitir('carteira_gerir'), async (req, res) => {
+  const { conferirCarteira } = await import('../erp/carteira.js');
+  try { res.json(await conferirCarteira(req.usuario.id)); } catch (e) { erroSenior(res, e); }
+});
+rotasErpAdmin.get('/carteira/importacoes', permitir('ver'), async (req, res) => {
+  const { listarImportacoesCarteira } = await import('../erp/carteira.js');
+  res.json({ itens: listarImportacoesCarteira() });
+});
+rotasErpAdmin.get('/carteira/importacoes/:id/exclusao', permitir('carteira_gerir'), async (req, res) => {
+  const { previaExclusaoCarteira } = await import('../erp/carteira.js');
+  const { notas, ...previa } = previaExclusaoCarteira(req.params.id);
+  res.json(previa);
+});
+rotasErpAdmin.delete('/carteira/importacoes/:id', permitir('carteira_gerir'), async (req, res) => {
+  const { excluirImportacaoCarteira } = await import('../erp/carteira.js');
+  if (!/^[a-f0-9]{64}$/.test(req.query.versao ?? '')) return res.status(400).json({ erro: 'Confira a exclusão antes de confirmar' });
+  const r = excluirImportacaoCarteira(req.params.id, req.usuario.id, req.query.versao);
+  auditar(req.usuario.id, 'carteira.excluir_importacao', 'carteira_importacao', r.id, r, req.ip);
+  res.json(r);
+});
+rotasErpAdmin.get('/carteira/:id/historico', permitir('carteira_ver'), async (req, res) => {
+  const { historicoCarteira } = await import('../erp/carteira.js');
+  res.json({ itens: historicoCarteira(req.params.id) });
+});
+rotasErpAdmin.put('/carteira/:id', permitir('carteira_operar'), async (req, res) => {
+  const { alterarNotaCarteira, alterarAndamentoCarteira } = await import('../erp/carteira.js');
+  const alterar = req.usuario.perfil === 'membro' ? alterarAndamentoCarteira : alterarNotaCarteira;
+  const r = alterar(req.params.id, req.body ?? {}, req.usuario.id);
+  auditar(req.usuario.id, 'carteira.alterar', 'carteira_nota', r.id, req.body, req.ip);
+  res.json(r);
+});
+
 rotasErpAdmin.get('/filas', permitir('ver'), async (req, res) => {
   const { listarFilas } = await import('../erp/filas.js');
   res.json(listarFilas());
@@ -152,7 +204,7 @@ rotasErpAdmin.get('/filas/sugestao', permitir('ver'), async (req, res) => {
 });
 rotasErpAdmin.get('/filas/dia', permitir('ver'), async (req, res) => {
   const { painelDoDia } = await import('../erp/filas.js');
-  try { res.json(await painelDoDia(req.query.dia)); } catch (e) { erroSenior(res, e); }
+  try { res.json(await painelDoDia(req.query.dia, { forcar: req.query.forcar === '1' })); } catch (e) { erroSenior(res, e); }
 });
 rotasErpAdmin.put('/filas/dia', permitir('decidir'), async (req, res) => {
   const { salvarCompromisso } = await import('../erp/filas.js');
@@ -175,26 +227,6 @@ rotasErpAdmin.put('/lancamentos/metas', permitir('administrar'), async (req, res
   const r = salvarMetas(req.body ?? {});
   auditar(req.usuario.id, 'lancamentos.metas', 'meta', null, req.body, req.ip);
   res.json(r);
-});
-rotasErpAdmin.get('/entradas/transacoes', permitir('ver'), async (req, res) => {
-  const { resumoTransacoes } = await import('../erp/entradas.js');
-  try { res.json(await resumoTransacoes()); } catch (e) { erroSenior(res, e); }
-});
-rotasErpAdmin.put('/entradas/depara/:codtns', permitir('decidir'), async (req, res) => {
-  const { salvarDepara } = await import('../erp/entradas.js');
-  const r = salvarDepara({ codtns: req.params.codtns, cfops: req.body?.cfops, observacao: req.body?.observacao }, req.usuario.id);
-  auditar(req.usuario.id, 'entradas.depara', 'transacao', req.params.codtns, req.body, req.ip);
-  res.json({ ok: true, depara: r });
-});
-rotasErpAdmin.post('/entradas/depara/:codtns/aceitar', permitir('decidir'), async (req, res) => {
-  const { aceitarCombinacao } = await import('../erp/entradas.js');
-  const r = aceitarCombinacao(req.params.codtns, req.body?.cfop, req.usuario.id);
-  auditar(req.usuario.id, 'entradas.aceitar_combinacao', 'transacao', req.params.codtns, req.body, req.ip);
-  res.json({ ok: true, depara: r });
-});
-rotasErpAdmin.get('/entradas/diagnostico', permitir('administrar'), async (req, res) => {
-  const { diagnosticoEsquema } = await import('../erp/entradas.js');
-  try { res.json(await diagnosticoEsquema()); } catch (e) { erroSenior(res, e); }
 });
 
 // ------------------------------------------------------------------ API pública para o ERP

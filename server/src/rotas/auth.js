@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { all, get, run } from '../db/index.js';
-import { autenticar, conferirSenha, criarSessao, encerrarSessao, hashSenha, senhaForte, PERMISSOES, permitir } from '../auth.js';
+import { autenticar, conferirSenha, criarSessao, encerrarSessao, hashSenha, senhaValida, PERMISSOES, permitir } from '../auth.js';
 import { auditar } from '../util/log.js';
 
 export const rotasAuthPublicas = Router();
@@ -44,7 +44,7 @@ rotasAuth.post('/auth/senha', (req, res) => {
   const { atual, nova } = req.body || {};
   const u = get('SELECT senha_hash FROM usuarios WHERE id = ?', [req.usuario.id]);
   if (!conferirSenha(String(atual || ''), u.senha_hash)) return res.status(400).json({ erro: 'Senha atual incorreta' });
-  if (!senhaForte(nova)) return res.status(400).json({ erro: 'A nova senha deve ter ao menos 10 caracteres, com letras e números' });
+  if (!senhaValida(nova)) return res.status(400).json({ erro: 'Informe a nova senha' });
   run('UPDATE usuarios SET senha_hash = ? WHERE id = ?', [hashSenha(nova), req.usuario.id]);
   auditar(req.usuario.id, 'usuario.alterar_senha', 'usuario', req.usuario.id, null, req.ip);
   res.json({ ok: true });

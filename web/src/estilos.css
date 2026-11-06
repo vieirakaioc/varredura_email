@@ -207,6 +207,9 @@ table.tabela { width: 100%; border-collapse: collapse; font-size: 12.5px; line-h
 .tabela th { text-align: left; font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--texto-3); padding: 8px 9px; border-bottom: 1px solid var(--borda); background: var(--superficie-2); white-space: nowrap; position: sticky; top: 0; z-index: 2; box-shadow: inset 0 -1px 0 var(--borda); }
 .tabela th.ordenavel { cursor: pointer; user-select: none; }
 .tabela th.ordenavel:hover { color: var(--texto); }
+.tabela .ordenar-coluna { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.tabela .ordenar-coluna:hover, .tabela .ordenar-coluna[data-ativo="true"] { color: var(--texto); }
+.tabela .ordenar-coluna:focus-visible { outline: 2px solid var(--marca); outline-offset: 3px; border-radius: 2px; }
 .tabela td { padding: 7px 9px; border-bottom: 1px solid var(--borda); vertical-align: middle; color: var(--texto); }
 .tabela th:first-child, .tabela td:first-child { padding-left: 16px; }
 .tabela th:last-child, .tabela td:last-child { padding-right: 16px; }
@@ -346,3 +349,12 @@ pre.json { background: var(--superficie-2); border: 1px solid var(--borda); bord
 .girando { width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--marca-2) 30%, transparent); border-top-color: var(--marca-2); animation: girar .8s linear infinite; flex: none; }
 @keyframes girar { to { transform: rotate(360deg); } }
 .desatualizado { opacity: .4; pointer-events: none; filter: grayscale(.4); transition: opacity .15s; }
+
+/* barra de atualização: canto superior direito de toda tela com consulta externa */
+.barra-atualizacao { position: sticky; top: 0; z-index: 28; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 28px 6px; background: var(--pagina); border-bottom: 1px solid var(--borda); }
+.barra-atualizacao .atualizacao-estado { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 550; color: var(--texto-2); white-space: nowrap; }
+@media (max-width: 760px) {
+  /* no celular o menu já ocupa o topo fixo: a barra acompanha a rolagem da página */
+  .barra-atualizacao { position: static; padding-left: 16px; padding-right: 16px; }
+  .barra-atualizacao .atualizacao-estado { white-space: normal; text-align: right; }
+}

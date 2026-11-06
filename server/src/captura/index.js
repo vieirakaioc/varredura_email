@@ -189,11 +189,7 @@ export function iniciarAgendador() {
       const { atualizarTodos } = await import('../fiscal/sefaz/dfe.js');
       await atualizarTodos();
     } catch (e) { log('erro', 'sefaz', `Distribuição DF-e falhou: ${e.message}`); }
-    // Depois da leitura dos e-mails, confere no Senior o que já foi lançado.
-    try {
-      const { conciliarSenior, seniorConfigurado } = await import('../erp/senior.js');
-      if (seniorConfigurado()) await conciliarSenior();
-    } catch (e) { log('erro', 'senior', `Conciliação falhou: ${e.message}`); }
+
   };
   timer = setInterval(ciclo, config.captura.intervaloMin * 60000);
   setTimeout(ciclo, 5000);

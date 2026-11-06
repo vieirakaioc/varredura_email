@@ -5,8 +5,9 @@ import { Topo } from '../contexto.jsx';
 import { brl, Cartao, Campo, cnpj, data, Erro, PagamentoSenior, SeniorBadge, Status, STATUS, Tabela, TIPOS_DOC, useDados, NotaArquivo, BoletoInfo, OrdemCompra, BotaoExportar, textoOrdemCompra, dataCurta } from '../ui.jsx';
 
 const CAMPOS_FILTRO = ['q', 'empresa_id', 'cnpj', 'fornecedor', 'de', 'ate', 'campo_data', 'numero', 'chave', 'cfop', 'status', 'tipo',
-  'responsavel_id', 'caixa_id', 'recebido_de', 'recebido_ate'];
-const ROTULOS_ESPECIAIS = { senior: 'Senior', sem_xml: 'Sem XML', duplicadas: 'Duplicadas', regra: 'Regra', categoria: 'Categoria', severidade: 'Severidade', atrasadas: 'Prazo vencido', cancelada: 'Canceladas', fornecedor_id: 'Fornecedor' };
+  'responsavel_id', 'caixa_id', 'recebido_de', 'recebido_ate', 'pagamento'];
+const PAGAMENTOS = [['', 'Pagamento: todos'], ['aberto', 'A pagar'], ['vencido', 'Vencidos'], ['pago', 'Pagos'], ['sem_titulo', 'Sem título no Senior']];
+const ROTULOS_ESPECIAIS = { senior: 'Senior', pagamento: 'Pagamento', sem_xml: 'Sem XML', duplicadas: 'Duplicadas', regra: 'Regra', categoria: 'Categoria', severidade: 'Severidade', atrasadas: 'Prazo vencido', cancelada: 'Canceladas', fornecedor_id: 'Fornecedor' };
 
 const SENIOR = { lancada: 'Lançada', nao_lancada: 'Não lançada' };
 const PAGAMENTO_SENIOR = { pago: 'Pago', em_pagamento: 'Em pagamento', aberto: 'A pagar' };
@@ -16,6 +17,9 @@ const COLUNAS_EXPORT = [
   { titulo: 'Número', valor: (l) => l.numero },
   { titulo: 'Série', valor: (l) => l.serie },
   { titulo: 'Chave de acesso', valor: (l) => l.chave_acesso },
+  { titulo: 'Pagamento (Senior)', valor: (l) => (l.senior_pagamento ? PAGAMENTO_SENIOR[l.senior_pagamento] : 'Sem título') },
+  { titulo: 'Vencimento', tipo: 'data', valor: (l) => l.senior_vencimento },
+  { titulo: 'Pago em', tipo: 'data', valor: (l) => l.senior_data_pagamento },
   { titulo: 'Fornecedor', valor: (l) => l.emitente_nome },
   { titulo: 'CNPJ fornecedor', valor: (l) => cnpj(l.emitente_cnpj) },
   { titulo: 'UF', valor: (l) => l.emitente_uf },
@@ -37,7 +41,7 @@ const COLUNAS_EXPORT = [
   { titulo: 'OC', valor: (l) => textoOrdemCompra(l) },
 ];
 
-export function ResumoAlertas({ l }) {
+function ResumoAlertas({ l }) {
   return (
     <span className="linha" style={{ gap: 4 }}>
       {l.qtd_erros > 0 && <span className="badge sev-erro" title="Erros">{l.qtd_erros} erro{l.qtd_erros > 1 ? 's' : ''}</span>}
@@ -88,7 +92,8 @@ export default function Documentos() {
     { campo: 'recebido', titulo: 'Recebido', classe: 'nowrap', ordenavel: true, render: (l) => <span title={data(l.recebido_em, true)}>{dataCurta(l.recebido_em)} <span className="muted">{String(l.recebido_em ?? '').slice(11, 16)}</span></span> },
     { campo: 'valor', titulo: 'Valor', classe: 'num', ordenavel: true, render: (l) => <div>{brl(l.v_total)}{l.v_liquido != null && Math.abs(l.v_liquido - l.v_total) > 0.009 && <div className="muted pequeno" title="Valor líquido (após retenções)">líq. {brl(l.v_liquido)}</div>}</div> },
     { campo: 'alertas', titulo: 'Ocorrências', render: (l) => <ResumoAlertas l={l} /> },
-    { campo: 'senior', titulo: 'Senior', render: (l) => <span className="linha" style={{ gap: 4, flexWrap: 'wrap' }}><SeniorBadge s={l.senior_status} titulo={l.senior_ref} /><PagamentoSenior l={l} /></span> },
+    { campo: 'senior', titulo: 'Senior', render: (l) => <SeniorBadge s={l.senior_status} titulo={l.senior_ref} /> },
+    { campo: 'pagamento', titulo: 'Pagamento', classe: 'nowrap', render: (l) => <PagamentoSenior l={l} semTitulo /> },
     { campo: 'nota_arquivo', titulo: 'Nota', render: (l) => <NotaArquivo l={l} /> },
     { campo: 'boleto', titulo: 'Boleto', classe: 'nowrap', render: (l) => <BoletoInfo l={l} /> },
     { campo: 'oc', titulo: 'OC', classe: 'nowrap', render: (l) => <OrdemCompra l={l} /> },
@@ -110,6 +115,11 @@ export default function Documentos() {
               </Campo>
               <Campo rotulo="Tipo de documento">
                 <select value={form.tipo} onChange={setJa('tipo')}><option value="">Todos</option>{Object.entries(TIPOS_DOC).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+              </Campo>
+              <Campo rotulo="Pagamento no Senior">
+                <select value={form.pagamento ?? ''} onChange={setJa('pagamento')}>
+                  {PAGAMENTOS.map(([k, v]) => <option key={k} value={k}>{k === '' ? 'Todos' : v}</option>)}
+                </select>
               </Campo>
               <Campo rotulo="Período de">
                 <input type="date" value={form.de} onChange={setJa('de')} />

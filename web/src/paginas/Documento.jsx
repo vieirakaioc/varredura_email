@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, baixar } from '../api.js';
-import { ModalPagamento } from './Financeiro.jsx';
+import { ModalPagamento } from './ModalPagamento.jsx';
 import {
   brl, Campo, Cartao, Carregando, chaveFmt, cnpj, data, Erro, Icone, Modal, numero, PagamentoSenior, pct, PRIORIDADE, Severidade, Status, TIPOS_DOC, useDados, useToast,
 } from '../ui.jsx';

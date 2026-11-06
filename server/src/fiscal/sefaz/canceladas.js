@@ -2,9 +2,24 @@
 // É o alerta que interessa ao fiscal: "entrou, foi lançada, e depois o fornecedor cancelou".
 import { all, get, insert, run } from '../../db/index.js';
 import { consultar, seniorConfigurado } from '../../erp/senior.js';
+import { comCache, versaoSql } from '../../erp/cache.js';
+import { EMPRESAS_FORA } from '../../erp/escopo.js';
 import { CANCELAMENTOS } from './dfe.js';
 
 const LOTE = 300; // chaves por consulta ao Senior
+// Situação no Senior das chaves canceladas. Função (e não constante) porque a lista entra no IN;
+// `versaoSql` sobre o molde entra na chave do cache: mudou o SELECT, a cópia antiga é descartada.
+const sqlPorChaves = (lista) => `SELECT n.CHVNEL, n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n.VLRLIQ, n.SITNFC,
+            f.NOMFOR, fi.NOMFIL, fi.SIGUFS AS UF_ENTRADA,
+            s.CODEMP AS EMIT_EMP, s.CODFIL AS EMIT_FIL, s.NUMNFV AS EMIT_NUM, s.DATCAN AS EMIT_DATCAN, s.NUMPRC AS EMIT_PROT,
+            fe.NOMFIL AS EMIT_NOME, fe.SIGUFS AS EMIT_UF,
+            (SELECT COUNT(*) FROM E501TCP t WHERE t.CODEMP = n.CODEMP AND t.FILNFC = n.CODFIL AND t.CODFOR = n.CODFOR AND t.NUMNFC = n.NUMNFC AND t.SITTIT NOT IN ('CA')) AS TITULOS,
+            (SELECT COALESCE(SUM(t.VLRABE), 0) FROM E501TCP t WHERE t.CODEMP = n.CODEMP AND t.FILNFC = n.CODFIL AND t.CODFOR = n.CODFOR AND t.NUMNFC = n.NUMNFC AND t.SITTIT IN ('AB','AV','AI','PE')) AS SALDO_ABERTO
+          FROM E440NFC n JOIN E095FOR f ON f.CODFOR = n.CODFOR
+          LEFT JOIN E070FIL fi ON fi.CODEMP = n.CODEMP AND fi.CODFIL = n.CODFIL
+          LEFT JOIN E140IDE s ON s.CHVDOE = n.CHVNEL AND s.SITDOE = 9
+          LEFT JOIN E070FIL fe ON fe.CODEMP = s.CODEMP AND fe.CODFIL = s.CODFIL
+          WHERE n.CHVNEL IN (${lista})`;
 // Notas de saída canceladas no próprio Senior (E140IDE, e-Docs de venda): SitDoe 9 = cancelado.
 // Serve para transferências dentro do grupo — pega o cancelamento mesmo sem certificado da filial.
 const SQL_SAIDAS_CANCELADAS = `SELECT s.CHVDOE, s.CODEMP AS EMP_SAIDA, s.CODFIL AS FIL_SAIDA, s.NUMNFV, s.DATCAN, s.NUMPRC, s.USUCAN,
@@ -21,7 +36,10 @@ const SITUACAO_SENIOR = { 1: 'Pendente/em digitação', 2: 'Ativa (escriturada)'
 const CANCELADA_NO_SENIOR = ['3'];
 
 /** Eventos de cancelamento recebidos, com a situação no Senior (lançada / não lançada). */
-export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas } = {}) {
+export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas, forcar } = {}) {
+  // O botão Atualizar da tela manda forcar=1; fora isso, vale a última cópia guardada no servidor,
+  // que é compartilhada por todo mundo — abrir a tela não dispara consulta ao Senior.
+  const ttl = forcar === '1' || forcar === true ? 0 : 3600_000;
   // Período: um mês exato (AAAA-MM) ou os últimos N dias
   const mesValido = /^\d{4}-\d{2}$/.test(String(mes ?? '')) ? String(mes) : null;
   const periodo = mesValido
@@ -41,23 +59,18 @@ export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas } = {}) {
   const porChave = new Map();
   let senior = 'ok';
   if (seniorConfigurado()) {
-    const chaves = [...new Set(eventos.map((e) => e.chave))];
+    const chaves = [...new Set(eventos.map((e) => e.chave))].sort();
     try {
-      for (let i = 0; i < chaves.length; i += LOTE) {
+      const linhas = await comCache(`sefaz-canceladas|${versaoSql(sqlPorChaves(''))}|${versaoSql(chaves.join(','))}`, ttl, async () => {
+        const acumulado = [];
+        for (let i = 0; i < chaves.length; i += LOTE) {
         const parte = chaves.slice(i, i + LOTE);
         const lista = parte.map((c) => `'${c.replace(/\D/g, '')}'`).join(',');
-        const linhas = await consultar(`SELECT n.CHVNEL, n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n.VLRLIQ, n.SITNFC,
-            f.NOMFOR, fi.NOMFIL, fi.SIGUFS AS UF_ENTRADA,
-            s.CODEMP AS EMIT_EMP, s.CODFIL AS EMIT_FIL, s.NUMNFV AS EMIT_NUM, s.DATCAN AS EMIT_DATCAN, s.NUMPRC AS EMIT_PROT,
-            fe.NOMFIL AS EMIT_NOME, fe.SIGUFS AS EMIT_UF,
-            (SELECT COUNT(*) FROM E501TCP t WHERE t.CODEMP = n.CODEMP AND t.FILNFC = n.CODFIL AND t.CODFOR = n.CODFOR AND t.NUMNFC = n.NUMNFC AND t.SITTIT NOT IN ('CA')) AS TITULOS,
-            (SELECT COALESCE(SUM(t.VLRABE), 0) FROM E501TCP t WHERE t.CODEMP = n.CODEMP AND t.FILNFC = n.CODFIL AND t.CODFOR = n.CODFOR AND t.NUMNFC = n.NUMNFC AND t.SITTIT IN ('AB','AV','AI','PE')) AS SALDO_ABERTO
-          FROM E440NFC n JOIN E095FOR f ON f.CODFOR = n.CODFOR
-          LEFT JOIN E070FIL fi ON fi.CODEMP = n.CODEMP AND fi.CODFIL = n.CODFIL
-          LEFT JOIN E140IDE s ON s.CHVDOE = n.CHVNEL AND s.SITDOE = 9
-          LEFT JOIN E070FIL fe ON fe.CODEMP = s.CODEMP AND fe.CODFIL = s.CODFIL
-          WHERE n.CHVNEL IN (${lista})`);
-        for (const l of linhas) {
+        acumulado.push(...await consultar(sqlPorChaves(lista)));
+        }
+        return acumulado;
+      });
+      for (const l of linhas) {
           porChave.set(String(l.CHVNEL).trim(), {
             codemp: l.CODEMP, codfil: l.CODFIL, filial: String(l.NOMFIL ?? '').trim() || null,
             numero: l.NUMNFC, serie: String(l.CODSNF ?? '').trim(), fornecedor: String(l.NOMFOR ?? '').trim() || null,
@@ -73,7 +86,6 @@ export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas } = {}) {
               protocolo: String(l.EMIT_PROT ?? '').trim() || null,
             } : null,
           });
-        }
       }
     } catch (e) { senior = `erro: ${e.message}`; }
   } else senior = 'nao_configurado';
@@ -82,7 +94,9 @@ export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas } = {}) {
   const extras = [];
   if (seniorConfigurado() && senior === 'ok') {
     try {
-      for (const l of await consultar(SQL_SAIDAS_CANCELADAS, new Date(`${periodo.de}T00:00:00Z`), { ate: new Date(`${periodo.ate}T23:59:59Z`) })) {
+      const saidas = await comCache(`sefaz-saidas|${versaoSql(SQL_SAIDAS_CANCELADAS)}|${periodo.de}|${periodo.ate}`, ttl,
+        () => consultar(SQL_SAIDAS_CANCELADAS, new Date(`${periodo.de}T00:00:00Z`), { ate: new Date(`${periodo.ate}T23:59:59Z`) }));
+      for (const l of saidas) {
         const chave = String(l.CHVDOE ?? '').trim();
         // Já veio pela SEFAZ: descarta o registro do Senior (e apaga o que tenha sobrado de execuções anteriores)
         if (eventos.some((e) => e.chave === chave && e.nsu !== 'senior-saida')) {
@@ -197,6 +211,11 @@ export async function canceladasNaSefaz({ dias = 180, mes, so_lancadas } = {}) {
       confirmado_no_senior: true, // cancelamento registrado nas duas pontas
     });
   }
-  const itens = [...porNota.values()].sort((a, b) => String(b.data_evento).localeCompare(String(a.data_evento)));
+  // Empresa fora do escopo deste time sai da lista. O corte é aqui, e não no SQL: a consulta por
+  // chave precisa achar a nota no Senior para saber de que empresa ela é — filtrando antes, ela
+  // voltaria sem par e apareceria como "cancelada e não lançada", que é pendência que não existe.
+  const dentroDoEscopo = (i) => !(i.senior?.codemp != null && EMPRESAS_FORA.includes(Number(i.senior.codemp)));
+  const itens = [...porNota.values()].filter(dentroDoEscopo)
+    .sort((a, b) => String(b.data_evento).localeCompare(String(a.data_evento)));
   return { senior, periodo, itens: so_lancadas === '1' ? itens.filter((i) => i.lancada) : itens };
 }

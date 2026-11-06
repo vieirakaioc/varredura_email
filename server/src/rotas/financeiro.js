@@ -75,46 +75,6 @@ rotasFinanceiro.get('/financeiro', permitir('financeiro'), (req, res) => {
   res.json({ hoje, indicadores: { ...k, bloqueados_qtd: bloqueados.qtd, bloqueados_valor: bloqueados.valor, sem_cobranca_qtd: semCobranca.qtd, sem_cobranca_valor: semCobranca.valor, divergencias_qtd: divergencias.qtd, divergencias_valor: divergencias.valor }, aging, fluxo, fornecedores, porEmpresa });
 });
 
-rotasFinanceiro.get('/financeiro/titulos', permitir('financeiro'), (req, res) => {
-  const q = req.query;
-  const hoje = hojeLocal();
-  const w = [];
-  const p = { hoje, d7: diasAPartirDeHoje(7), d30: diasAPartirDeHoje(30) };
-  switch (q.situacao) {
-    case 'vencidas': w.push(`${ABERTA} AND dp.vencimento < :hoje`, DOC_VALIDO); break;
-    case 'hoje': w.push(`${ABERTA} AND dp.vencimento = :hoje`, DOC_VALIDO); break;
-    case '7d': w.push(`${ABERTA} AND dp.vencimento > :hoje AND dp.vencimento <= :d7`, DOC_VALIDO); break;
-    case '30d': w.push(`${ABERTA} AND dp.vencimento > :d7 AND dp.vencimento <= :d30`, DOC_VALIDO); break;
-    case 'risco': w.push(`${ABERTA} AND dp.vencimento <= :d7 AND d.status <> 'APROVADA'`, DOC_VALIDO); break;
-    case 'programadas': w.push("dp.status_pagamento = 'programada'"); break;
-    case 'pagas': w.push("dp.status_pagamento = 'paga'"); break;
-    case 'bloqueados': w.push(ABERTA, `NOT (${DOC_VALIDO})`); break;
-    case 'divergencias': w.push(COM_DIVERGENCIA, DOC_VALIDO); break;
-    case 'todas': break;
-    default: w.push(ABERTA, DOC_VALIDO);
-  }
-  if (q.empresa_id) { w.push('d.empresa_id = :emp'); p.emp = Number(q.empresa_id); }
-  if (q.fornecedor_id) { w.push('d.fornecedor_id = :forn'); p.forn = Number(q.fornecedor_id); }
-  if (q.fornecedor) { w.push('(d.emitente_nome LIKE :fn OR d.emitente_cnpj LIKE :fc)'); p.fn = `%${q.fornecedor}%`; p.fc = `%${limparId(q.fornecedor) || '#'}%`; }
-  if (q.status_fiscal === 'aprovada') w.push("d.status = 'APROVADA'");
-  if (q.status_fiscal === 'pendente') w.push("d.status <> 'APROVADA'");
-  if (q.de) { w.push('dp.vencimento >= :de'); p.de = q.de; }
-  if (q.ate) { w.push('dp.vencimento <= :ate'); p.ate = q.ate; }
-  const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
-  const ordem = q.situacao === 'pagas' ? 'dp.data_pagamento DESC' : 'dp.vencimento ASC, dp.valor DESC';
-  const itens = all(`SELECT dp.*, dp.numero AS numero_dup, d.numero, d.serie, d.tipo, d.emitente_nome, d.emitente_cnpj, d.status AS status_fiscal, d.situacao_sefaz, d.v_total, d.empresa_id,
-      d.senior_status, d.senior_ref, ${SQL_PAGAMENTO_SENIOR}, d.oc_documento, d.senior_ocs, d.pdf_anexo_id, d.xml_anexo_id,
-      (SELECT a.id FROM anexos a WHERE a.documento_id = d.id AND a.tipo_detectado = 'boleto_pdf' ORDER BY a.id LIMIT 1) AS boleto_anexo_id,
-      COALESCE(e.nome_fantasia, e.razao_social) AS empresa, u.nome AS atualizado_por_nome,
-      CAST(julianday(dp.vencimento) - julianday(:hoje) AS INTEGER) AS dias,
-      (SELECT COUNT(*) FROM documento_duplicatas x WHERE x.documento_id = d.id) AS parcelas,
-      (SELECT COUNT(*) FROM inconsistencias x WHERE x.documento_id = d.id AND x.status = 'aberta' AND x.severidade = 'erro') AS qtd_erros,
-      (SELECT group_concat(x.problema, ' · ') FROM inconsistencias x WHERE x.documento_id = d.id AND x.status = 'aberta' AND x.categoria = 'financeiro' AND x.severidade IN ('erro','alerta')) AS divergencia
-    FROM documento_duplicatas dp JOIN documentos d ON d.id = dp.documento_id LEFT JOIN empresas e ON e.id = d.empresa_id LEFT JOIN usuarios u ON u.id = dp.atualizado_por
-    ${where} ORDER BY ${ordem} LIMIT 1000`, p);
-  res.json({ itens, total_valor: itens.reduce((a, t) => a + (t.valor ?? 0), 0) });
-});
-
 rotasFinanceiro.post('/duplicatas/:id/pagamento', permitir('pagamentos'), (req, res) => {
   const dp = get('SELECT dp.*, d.status AS status_fiscal, d.situacao_sefaz FROM documento_duplicatas dp JOIN documentos d ON d.id = dp.documento_id WHERE dp.id = ?', [Number(req.params.id)]);
   if (!dp) return res.status(404).json({ erro: 'Duplicata não encontrada' });

@@ -31,7 +31,7 @@ export default function Auditoria() {
             </form>
           )}
           <Erro erro={erro} />
-          {carregando ? <Carregando /> : aba === 'usuarios' ? (
+          {carregando && !dados ? <Carregando /> : aba === 'usuarios' ? (
             <Tabela linhas={dados} onClique={(l) => l.entidade === 'documento' && l.entidade_id && navegar(`/documentos/${l.entidade_id}`)} colunas={[
               { campo: 'created_at', titulo: 'Data/hora', render: (l) => <span className="nowrap">{data(l.created_at, true)}</span> },
               { campo: 'usuario_nome', titulo: 'Usuário', render: (l) => l.usuario_nome ?? <span className="muted">Sistema / integração</span> },

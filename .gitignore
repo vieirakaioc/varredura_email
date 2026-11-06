@@ -4,3 +4,13 @@ data/
 web/dist/
 server/scratch_check.mjs
 data_backup*
+
+.publicacao/
+
+.env.*
+!.env.example
+
+# Dados e arquivos gerados apenas nesta máquina
+data_demo_backup/
+outputs/
+tmp/

@@ -94,7 +94,7 @@ export default function Fornecedores() {
               <button className="btn primario">Buscar</button>
             </form>
             <Erro erro={erro} />
-            {carregando ? <Carregando /> : (
+            {carregando && !dados ? <Carregando /> : (
               <Tabela linhas={dados} onClique={(l) => navegar(`/fornecedores/${l.id}`)} colunas={[
                 { campo: 'razao_social', titulo: 'Fornecedor', render: (l) => <div><strong>{l.nome_fantasia || l.razao_social}</strong><div className="muted pequeno">{l.razao_social}</div></div> },
                 { campo: 'cnpj', titulo: 'CNPJ', render: (l) => <span className="mono">{cnpj(l.cnpj)}</span> },

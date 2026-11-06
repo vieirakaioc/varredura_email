@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { BotaoResumo } from '../resumo.jsx';
@@ -8,7 +8,6 @@ import { AvisoCarregando, brl, BotaoExportar, COR_CATEGORIA, Cartao, Carregando,
 import Lancamentos from './Lancamentos.jsx';
 import MalhaFina from './MalhaFina.jsx';
 import FilasCompromisso from './Filas.jsx';
-import Excecoes from './Excecoes.jsx';
 
 const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
 const brlCurto = (v) => (Math.abs(v) >= 1000000 ? `R$ ${(v / 1000000).toFixed(1)} mi` : Math.abs(v) >= 1000 ? `R$ ${Math.round(v / 1000)} mil` : brl(v));
@@ -58,10 +57,13 @@ const COLUNAS_EXPORT = [
   { titulo: 'Emissão', tipo: 'data', valor: (l) => l.emissao },
   { titulo: 'Documento', valor: (l) => l.especie_rotulo },
   { titulo: 'Número', valor: (l) => l.numero },
+  { titulo: 'Série', valor: (l) => l.serie ?? '' },
   { titulo: 'Chave de acesso', valor: (l) => l.chave },
   { titulo: 'Fornecedor', valor: (l) => l.fornecedor },
   { titulo: 'CNPJ fornecedor', valor: (l) => fmtCnpj(l.cnpj_fornecedor) },
   { titulo: 'Empresa destinatária', valor: (l) => l.empresa },
+  { titulo: 'Tomador', valor: (l) => l.empresa },
+  { titulo: 'CNPJ tomador', valor: (l) => fmtCnpj(l.cnpj_destinatario) },
   { titulo: 'Emp/Fil', valor: (l) => (l.empresa_do_grupo ? `${l.codemp}/${l.codfil}` : '') },
   { titulo: 'UF', valor: (l) => l.uf },
   { titulo: 'Valor', tipo: 'moeda', valor: (l) => l.valor },
@@ -76,6 +78,10 @@ const COLUNAS_EXPORT = [
   { titulo: 'Observação do motivo', valor: (l) => l.motivo_obs },
   { titulo: 'Motivo informado por', valor: (l) => (l.motivo_por ? `${l.motivo_por} em ${data(l.motivo_em, true)}` : '') },
   { titulo: 'Responsável', valor: (l) => (l.responsavel === 'faturamento' ? 'Faturamento' : 'Escrita Fiscal') },
+  { titulo: 'Prioridade', valor: () => '' },
+  { titulo: 'Data prevista', tipo: 'data', valor: () => '' },
+  { titulo: 'Responsável da programação', valor: () => '' },
+  { titulo: 'Observação da programação', valor: () => '' },
 ];
 
 function Dica({ active, payload, label, sufixo }) {
@@ -89,9 +95,16 @@ function Dica({ active, payload, label, sufixo }) {
 }
 
 export default function Pendentes() {
+  const { usuario } = useAuth();
   const [params] = useSearchParams();
   const aba = params.get('aba');
-  const painel = aba === 'lancamentos' ? <Lancamentos /> : aba === 'malha' ? <MalhaFina /> : aba === 'filas' ? <FilasCompromisso /> : aba === 'excecoes' ? <Excecoes /> : <PainelPendentes />;
+  if (usuario.perfil === 'membro') {
+    const consulta = new URLSearchParams(params);
+    consulta.delete('aba');
+    const sufixo = consulta.toString();
+    return <Navigate to={aba === 'malha' ? `/malha-fina${sufixo ? `?${sufixo}` : ''}` : '/carteira'} replace />;
+  }
+  const painel = aba === 'lancamentos' ? <Lancamentos /> : aba === 'malha' ? <MalhaFina /> : aba === 'filas' ? <FilasCompromisso /> : <PainelPendentes />;
   return <ComAbas>{painel}</ComAbas>;
 }
 
@@ -113,7 +126,6 @@ function ComAbas({ children }) {
           <button className={aba === 'pendentes' ? 'ativa' : ''} onClick={() => trocarAba('pendentes')}>Pendentes de lançamento</button>
           <button className={aba === 'lancamentos' ? 'ativa' : ''} onClick={() => trocarAba('lancamentos')}>Produtividade do lançamento</button>
           <button className={aba === 'filas' ? 'ativa' : ''} onClick={() => trocarAba('filas')}>Filas e compromisso</button>
-          <button className={aba === 'excecoes' ? 'ativa' : ''} onClick={() => trocarAba('excecoes')}>Exceções</button>
           <button className={aba === 'malha' ? 'ativa' : ''} onClick={() => trocarAba('malha')}>Malha fina</button>
         </div>
         {children}

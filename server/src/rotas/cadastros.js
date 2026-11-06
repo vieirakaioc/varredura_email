@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { all, get, getConfig, insert, parseJSON, run, setConfig, update } from '../db/index.js';
-import { permitir, hashSenha, senhaForte, PERFIS } from '../auth.js';
+import { permitir, hashSenha, senhaValida, PERFIS } from '../auth.js';
 import { auditar } from '../util/log.js';
 import { cnpjValido, limparId } from '../fiscal/validadores.js';
 import { perfilFornecedor, resumoOcorrenciasFornecedor } from '../fiscal/historico.js';
@@ -159,7 +159,7 @@ rotasCadastros.post('/usuarios', permitir('administrar'), (req, res) => {
   const b = req.body || {};
   if (!b.nome?.trim() || !/^[^@\s]+@[^@\s]+$/.test(b.email || '')) return res.status(400).json({ erro: 'Nome e e-mail obrigatórios' });
   if (!PERFIS[b.perfil]) return res.status(400).json({ erro: 'Perfil inválido' });
-  if (!senhaForte(b.senha)) return res.status(400).json({ erro: 'Senha deve ter ao menos 10 caracteres, com letras e números' });
+  if (!senhaValida(b.senha)) return res.status(400).json({ erro: 'Informe uma senha' });
   if (get('SELECT 1 FROM usuarios WHERE email = ?', [b.email])) return res.status(409).json({ erro: 'E-mail já cadastrado' });
   const id = insert('usuarios', { nome: b.nome.trim(), email: b.email.trim().toLowerCase(), perfil: b.perfil, senha_hash: hashSenha(b.senha) });
   auditar(req.usuario.id, 'usuario.criar', 'usuario', id, { nome: b.nome, email: b.email, perfil: b.perfil }, req.ip);
@@ -171,7 +171,7 @@ rotasCadastros.put('/usuarios/:id', permitir('administrar'), (req, res) => {
   const id = Number(req.params.id);
   if (b.perfil && !PERFIS[b.perfil]) return res.status(400).json({ erro: 'Perfil inválido' });
   if (id === req.usuario.id && (b.ativo === false || (b.perfil && b.perfil !== 'admin'))) return res.status(400).json({ erro: 'Você não pode desativar ou rebaixar o próprio usuário' });
-  if (b.senha && !senhaForte(b.senha)) return res.status(400).json({ erro: 'Senha deve ter ao menos 10 caracteres, com letras e números' });
+  if (b.senha != null && b.senha !== '' && !senhaValida(b.senha)) return res.status(400).json({ erro: 'Informe a senha como texto' });
   update('usuarios', id, {
     nome: b.nome, perfil: b.perfil, ativo: b.ativo == null ? undefined : (b.ativo ? 1 : 0),
     senha_hash: b.senha ? hashSenha(b.senha) : undefined,

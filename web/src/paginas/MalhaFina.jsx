@@ -1,10 +1,59 @@
 import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, qs } from '../api.js';
 import { BotaoResumo } from '../resumo.jsx';
+import { useAuth } from '../contexto.jsx';
+import { numeroNfse } from '../nfse.js';
 import { brl, BotaoExportar, Cartao, Carregando, cnpj as fmtCnpj, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
 
 const MODELOS = { 55: 'NF-e', 57: 'CT-e', 65: 'NFC-e', 58: 'MDF-e', 59: 'SAT', 67: 'CT-e OS' };
+
+const eixo = { fontSize: 11, fill: 'var(--texto-3)' };
+
+function DicaRanking({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const x = payload[0].payload;
+  return (
+    <div className="tooltip-grafico">
+      <div className="t">{x._texto}</div>
+      <div>Não lançadas: <strong>{numero(payload[0].value)}</strong></div>
+      <div>Valor: <strong>{brl(x.valor)}</strong></div>
+    </div>
+  );
+}
+
+/** Altura de um ranking com n barras. Os dois cartões usam a maior das duas, para ficarem iguais. */
+const alturaRanking = (n) => Math.max(160, n * 30 + 36);
+
+/**
+ * Ranking de notas não lançadas em barras. Antes era uma linha fina por item: com um prestador
+ * concentrando quase tudo, as barras pequenas viravam risco e não dava para comparar. Continua
+ * clicável para filtrar, e o item filtrado fica cheio enquanto os outros desbotam.
+ */
+function RankingBarras({ dados, campo, rotulo, onClique, ativo, altura }) {
+  const d = dados.map((x) => {
+    const texto = rotulo(x);
+    return { ...x, _texto: texto, _rotulo: texto.length > 30 ? `${texto.slice(0, 29)}…` : texto };
+  });
+  return (
+    <ResponsiveContainer width="100%" height={altura ?? alturaRanking(d.length)}>
+      <BarChart data={d} layout="vertical" margin={{ left: 8, right: 52, top: 4, bottom: 4 }} barCategoryGap={6}>
+        <CartesianGrid horizontal={false} stroke="var(--grade)" />
+        <XAxis type="number" tick={eixo} axisLine={false} tickLine={false} allowDecimals={false} />
+        <YAxis type="category" dataKey="_rotulo" width={200} tick={{ ...eixo, fill: 'var(--texto-2)' }}
+          axisLine={{ stroke: 'var(--eixo)' }} tickLine={false} interval={0} />
+        <Tooltip cursor={{ fill: 'var(--superficie-3)' }} content={<DicaRanking />} />
+        <Bar isAnimationActive={false} dataKey={campo} name="Não lançadas" fill="var(--serie-1)"
+          radius={[0, 4, 4, 0]} maxBarSize={18} style={{ cursor: 'pointer' }}
+          onClick={(e) => onClique((e?.payload ?? e).chave)}>
+          {d.map((x) => <Cell key={x.chave} fillOpacity={!ativo || ativo === x.chave ? 1 : 0.35} />)}
+          <LabelList dataKey={campo} position="right" offset={6} style={eixo} formatter={(v) => numero(v)} />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
 
 // Cor de cada resultado da conferência. É o centro da tela: dá para bater o olho e ver o que falta lançar.
 const CORES = {
@@ -14,6 +63,7 @@ const CORES = {
   conferir: { cor: '#b26a00', fundo: 'color-mix(in srgb, #b26a00 16%, transparent)', rotulo: 'CONFERIR' },
   so_saida: { cor: 'var(--serie-1)', fundo: 'color-mix(in srgb, var(--serie-1) 10%, transparent)', rotulo: 'Emitida, sem entrada' },
   cancelada_senior: { cor: 'var(--dup)', fundo: 'color-mix(in srgb, var(--dup) 12%, transparent)', rotulo: 'Entrada cancelada' },
+  fora_escopo: { cor: 'var(--texto-3)', fundo: 'color-mix(in srgb, var(--texto-3) 10%, transparent)', rotulo: 'Fora do escopo' },
   cancelada_prefeitura: { cor: 'var(--texto-fraco)', fundo: 'transparent', rotulo: 'Cancelada na prefeitura' },
   nao_conferida: { cor: 'var(--texto-fraco)', fundo: 'transparent', rotulo: 'Não conferida' },
 };
@@ -23,7 +73,7 @@ const COLUNAS_EXPORTAR = [
   { titulo: 'Competência', tipo: 'data', valor: (n) => n.competencia },
   { titulo: 'Prestador', valor: (n) => n.prestador },
   { titulo: 'CNPJ prestador', valor: (n) => n.cnpj_prestador },
-  { titulo: 'NFS-e', valor: (n) => n.numero },
+  { titulo: 'NFS-e', valor: (n) => numeroNfse(n.numero) },
   { titulo: 'Município', valor: (n) => n.municipio_prestador },
   { titulo: 'Tomador (planilha)', valor: (n) => n.empresa },
   // Vazio em vez do travessão: na planilha, célula em branco filtra melhor que texto
@@ -40,6 +90,7 @@ const COLUNAS_EXPORTAR = [
   { titulo: 'Explicação da diferença', valor: (n) => n.retencao },
   { titulo: 'Alerta do casamento', valor: (n) => n.alerta },
   { titulo: 'Retenções na planilha', tipo: 'moeda', valor: (n) => n.retencoes_planilha },
+  { titulo: 'Link da NFS-e', valor: (n) => n.link },
   { titulo: 'Linha na planilha', tipo: 'numero', valor: (n) => n.linha },
 ];
 
@@ -130,6 +181,8 @@ function resumoMalha(d) {
 }
 
 export default function MalhaFina() {
+  const { pode } = useAuth();
+  const editar = pode('decidir');
   const [params, setParams] = useSearchParams();
   const f = {
     lote: params.get('lote') ?? '', situacao: params.get('situacao') ?? '',
@@ -153,7 +206,7 @@ export default function MalhaFina() {
   );
 
   const enviar = async (arquivo) => {
-    if (!arquivo) return;
+    if (!editar || !arquivo) return;
     setEnviando(true);
     try {
       const corpo = new FormData();
@@ -173,6 +226,7 @@ export default function MalhaFina() {
   };
 
   const conferir = async () => {
+    if (!editar) return;
     setConferindo(true);
     try {
       const r = await api.post(`/malha-fina/${loteId}/conferir`);
@@ -182,17 +236,20 @@ export default function MalhaFina() {
   };
 
   const marcarPj = async (nota) => {
+    if (!editar) return;
     await api.post('/malha-fina/pj', { cnpj: nota.cnpj_prestador, nome: nota.prestador });
     avisar(`${nota.prestador} entrou na lista de PJ e saiu da conferência`, 'ok');
     painel.recarregar(); listaPj.recarregar();
   };
   const tirarPj = async (cnpj, nome) => {
+    if (!editar) return;
     await api.del(`/malha-fina/pj/${cnpj}`);
     avisar(`${nome ?? cnpj} voltou para a conferência`, 'ok');
     painel.recarregar(); listaPj.recarregar();
   };
 
   const apagar = async (id) => {
+    if (!editar) return;
     await api.del(`/malha-fina/${id}`);
     avisar('Planilha removida', 'ok');
     setParams({ aba: 'malha' });
@@ -206,7 +263,7 @@ export default function MalhaFina() {
   return (
     <>
       <Cartao titulo="Planilha da contabilidade" sub="serviços tomados (NFS-e) que o fisco já sabe que recebemos">
-        <div
+        {editar && <div
           onDragOver={(e) => { e.preventDefault(); setArrastando(true); }}
           onDragLeave={() => setArrastando(false)}
           onDrop={(e) => { e.preventDefault(); setArrastando(false); enviar(e.dataTransfer.files?.[0]); }}
@@ -228,7 +285,7 @@ export default function MalhaFina() {
             achadas pelo nome, então a ordem pode mudar. A planilha fica guardada aqui: dá para reconferir quando
             quiser, sem reenviar.
           </div>
-        </div>
+        </div>}
 
         {Boolean(lotes.dados?.lotes?.length) && (
           <div className="linha" style={{ gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
@@ -240,13 +297,13 @@ export default function MalhaFina() {
                 </option>
               ))}
             </select>
-            <button className="btn pequeno" onClick={conferir} disabled={conferindo || !loteId}>
+            {editar && <button className="btn pequeno" onClick={conferir} disabled={conferindo || !loteId}>
               {conferindo ? 'Conferindo no Senior…' : 'Atualizar conferência'}
-            </button>
+            </button>}
             {d && <BotaoResumo resumo={() => resumoMalha(d)} />}
             {d?.lote?.conferido_em && <span className="muted pequeno">conferido em {data(d.lote.conferido_em, true)}</span>}
             <span className="espaco" />
-            {loteId && <button className="btn pequeno ghost" onClick={() => apagar(loteId)}>Remover esta planilha</button>}
+            {editar && loteId && <button className="btn pequeno ghost" onClick={() => apagar(loteId)}>Remover esta planilha</button>}
           </div>
         )}
       </Cartao>
@@ -254,7 +311,7 @@ export default function MalhaFina() {
       <Erro erro={lotes.erro ?? painel.erro} />
 
       {!lotes.dados?.lotes?.length && !lotes.carregando && (
-        <Cartao><p className="muted" style={{ margin: 0 }}>Nenhuma planilha importada ainda. Envie o arquivo acima para começar.</p></Cartao>
+        <Cartao><p className="muted" style={{ margin: 0 }}>Nenhuma planilha importada ainda.{editar ? ' Envie o arquivo acima para começar.' : ''}</p></Cartao>
       )}
 
       {painel.carregando && !d ? <Carregando /> : d && (
@@ -286,7 +343,7 @@ export default function MalhaFina() {
               </span>
               <span className="espaco" />
               <button className="btn pequeno ghost" onClick={() => setVendoPj((x) => !x)}>
-                {vendoPj ? 'Fechar a lista' : 'Ver/editar a lista de PJ'}
+                {vendoPj ? 'Fechar a lista' : editar ? 'Ver/editar a lista de PJ' : 'Ver a lista de PJ'}
               </button>
             </div>
             {vendoPj && (
@@ -294,7 +351,7 @@ export default function MalhaFina() {
                 {(listaPj.dados?.pj ?? []).map((p) => (
                   <div key={p.cnpj} className="linha entre pequeno" style={{ gap: 6 }}>
                     <span className="truncar" title={fmtCnpj(p.cnpj)}>{p.nome ?? fmtCnpj(p.cnpj)}</span>
-                    <button className="btn pequeno ghost" title="Tirar da lista e voltar a conferir" onClick={() => tirarPj(p.cnpj, p.nome)}>✕</button>
+                    {editar && <button className="btn pequeno ghost" title="Tirar da lista e voltar a conferir" onClick={() => tirarPj(p.cnpj, p.nome)}>✕</button>}
                   </div>
                 ))}
                 {!listaPj.dados?.pj?.length && <span className="muted pequeno">Nenhum PJ cadastrado.</span>}
@@ -302,50 +359,35 @@ export default function MalhaFina() {
             )}
           </Cartao>}
 
-          {Boolean(d.por_empresa.filter((x) => x.nao_lancadas).length) && (
-            <Cartao titulo="Empresas com notas não lançadas" sub="clique para filtrar" semPadding>
-              <div style={{ padding: 12 }}>
-                {d.por_empresa.filter((x) => x.nao_lancadas).map((x) => {
-                  const max = Math.max(...d.por_empresa.map((y) => y.nao_lancadas), 1);
-                  const ativo = f.empresa === x.chave;
-                  return (
-                    <button key={x.chave} className="linha entre" onClick={() => setFiltro('empresa', ativo ? '' : x.chave)}
-                      style={{ width: '100%', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', opacity: !f.empresa || ativo ? 1 : 0.5 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="linha entre pequeno">
-                          <span className="truncar">{x.chave !== '—' ? <code className="muted">{x.chave}</code> : null} {x.rotulo}</span>
-                          <strong>{numero(x.nao_lancadas)} · {brl(x.valor)}</strong>
-                        </div>
-                        <div className="barra-progresso"><div style={{ width: `${(x.nao_lancadas / max) * 100}%`, background: 'var(--status-critico)' }} /></div>
-                      </div>
-                    </button>
-                  );
-                })}
+          {(() => {
+            const empresas = d.por_empresa.filter((x) => x.nao_lancadas);
+            const prestadores = efd ? [] : d.por_prestador;
+            if (!empresas.length && !prestadores.length) return null;
+            // Mesma altura nos dois: lado a lado, alturas diferentes deixam o par torto
+            const altura = alturaRanking(Math.max(empresas.length, prestadores.length));
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 12, alignItems: 'start' }}>
+                {Boolean(empresas.length) && (
+                  <Cartao titulo="Empresas com notas não lançadas" sub="clique na barra para filtrar" semPadding>
+                    <div style={{ padding: '12px 12px 4px' }}>
+                      <RankingBarras dados={empresas} campo="nao_lancadas" ativo={f.empresa} altura={altura}
+                        rotulo={(x) => (x.chave !== '—' ? `${x.chave} ${x.rotulo}` : x.rotulo)}
+                        onClique={(chave) => setFiltro('empresa', f.empresa === chave ? '' : chave)} />
+                    </div>
+                  </Cartao>
+                )}
+                {Boolean(prestadores.length) && (
+                  <Cartao titulo="Prestadores com mais notas não lançadas" sub="clique na barra para filtrar" semPadding>
+                    <div style={{ padding: '12px 12px 4px' }}>
+                      <RankingBarras dados={prestadores} campo="qtd" ativo={f.busca} altura={altura}
+                        rotulo={(p) => p.rotulo}
+                        onClique={(chave) => setFiltro('busca', f.busca === chave ? '' : chave)} />
+                    </div>
+                  </Cartao>
+                )}
               </div>
-            </Cartao>
-          )}
-
-          {!efd && Boolean(d.por_prestador.length) && (
-            <Cartao titulo="Prestadores com mais notas não lançadas" sub="clique para filtrar" semPadding>
-              <div style={{ padding: 12 }}>
-                {d.por_prestador.map((p) => {
-                  const max = Math.max(...d.por_prestador.map((x) => x.qtd), 1);
-                  return (
-                    <button key={p.chave} className="linha entre" onClick={() => setFiltro('busca', f.busca === p.chave ? '' : p.chave)}
-                      style={{ width: '100%', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="linha entre pequeno">
-                          <span className="truncar">{p.rotulo}</span>
-                          <strong>{numero(p.qtd)} · {brl(p.valor)}</strong>
-                        </div>
-                        <div className="barra-progresso"><div style={{ width: `${(p.qtd / max) * 100}%`, background: 'var(--status-critico)' }} /></div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </Cartao>
-          )}
+            );
+          })()}
 
           <Cartao titulo="Notas da planilha" sub={`${numero(d.total)} linha(s)${f.situacao ? ` · ${CORES[f.situacao]?.rotulo}` : ''}`} semPadding
             acoes={<div className="linha" style={{ gap: 8 }}>
@@ -416,13 +458,18 @@ export default function MalhaFina() {
                         <td>
                           <div className="linha" style={{ gap: 6 }}>
                             <span className="truncar" style={{ maxWidth: 240 }}>{n.prestador ?? '—'}</span>
-                            <button className="btn pequeno ghost" style={{ padding: '0 6px', lineHeight: 1.6 }}
+                            {editar && <button className="btn pequeno ghost" style={{ padding: '0 6px', lineHeight: 1.6 }}
                               title={`Marcar ${n.prestador ?? 'este prestador'} como PJ e tirar da conferência`}
-                              onClick={() => marcarPj(n)}>+PJ</button>
+                              onClick={() => marcarPj(n)}>+PJ</button>}
                           </div>
                           <div className="muted pequeno">{fmtCnpj(n.cnpj_prestador)}{n.municipio_prestador ? ` · ${n.municipio_prestador}` : ''}</div>
                         </td>
-                        <td>{n.numero}<div className="muted pequeno">linha {n.linha}</div></td>
+                        <td>
+                          {n.link
+                            ? <a href={n.link} target="_blank" rel="noopener noreferrer" title={`Abrir a nota no site da prefeitura · Número original: ${n.numero}`}>{numeroNfse(n.numero)} ↗</a>
+                            : <span title={`Número original: ${n.numero}`}>{numeroNfse(n.numero)}</span>}
+                          <div className="muted pequeno">linha {n.linha}</div>
+                        </td>
                         <td className="num">{brl(n.valor)}</td>
                         <td>
                           {n.entrada_numero

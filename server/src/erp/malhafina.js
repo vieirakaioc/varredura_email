@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { all, get, getConfig, insert, run, setConfig, tx } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { comCache, versaoSql } from './cache.js';
+import { EMPRESAS_FORA, semEmpresasFora } from './escopo.js';
 
 export const SITUACOES = {
   lancada: 'Lançada no Senior',
@@ -40,6 +41,7 @@ const COLUNAS = {
   municipio_prestador: ['municipio prestador'],
   valor: ['valor nfe', 'valor da nfe', 'valor total'],
   valor_liquido: ['valor liquido'],
+  link: ['link para nfse', 'link da nfse', 'link nfse', 'link'],
   // segundo layout (relatório da EFD): a chave de acesso é a identificação
   status_planilha: ['status'],
   modelo: ['modelo nota', 'modelo'],
@@ -65,6 +67,14 @@ const texto = (v) => {
   if (typeof v === 'object') return String(v.text ?? v.result ?? v.richText?.map((r) => r.text).join('') ?? '').trim() || null;
   return String(v).trim() || null;
 };
+// Endereço público da nota na prefeitura. A célula vem como hiperlink do Excel (texto + destino),
+// e é o destino que interessa. Só http/https: a planilha é arquivo de fora.
+const endereco = (v) => {
+  const bruto = (v && typeof v === 'object' ? v.hyperlink ?? v.text : v) ?? '';
+  const url = String(bruto).trim();
+  return /^https?:\/\//i.test(url) ? url.slice(0, 2000) : null;
+};
+
 const numero = (v) => {
   if (v == null || v === '') return null;
   if (typeof v === 'number') return v;
@@ -179,6 +189,7 @@ export async function lerPlanilha(buffer) {
       municipio_prestador: texto(celula(linha, 'municipio_prestador')),
       valor: numero(celula(linha, 'valor')),
       valor_liquido: numero(celula(linha, 'valor_liquido')),
+      link: endereco(celula(linha, 'link')),
       retencoes_planilha: Math.round(mapa._retencoes.reduce((t, c) => t + (numero(linha.getCell(c).value) ?? 0), 0) * 100) / 100,
       linha: n,
     });
@@ -327,6 +338,7 @@ async function conferirEfd(loteId, notas, forcar) {
 
   const agora = new Date().toISOString().slice(0, 19).replace('T', ' ');
   const iso = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v ? String(v).slice(0, 10) : null);
+  const foraDoEscopo = (emp) => emp != null && EMPRESAS_FORA.includes(Number(emp));
   const nomeFilial = (sig, nome, emp, fil) => String(sig ?? '').trim() || String(nome ?? '').trim() || (emp != null ? `${emp}/${fil}` : null);
   const resumo = {};
   tx(() => {
@@ -338,7 +350,11 @@ async function conferirEfd(loteId, notas, forcar) {
       const canceladaEntrada = temEntrada && String(a.SITNFC).trim() === '3';
 
       let situacao;
-      if (!a) situacao = nota.cancelada_na_prefeitura ? 'cancelada_prefeitura' : 'nao_lancada';
+      // A planilha da contabilidade cobre o grupo todo; as notas de empresa fora do escopo deste
+      // time são marcadas, não contadas como pendência — e a chave continua sendo procurada no
+      // Senior, senão elas cairiam em "não lançada", que é exatamente o alarme falso a evitar.
+      if (a && (foraDoEscopo(a.ENT_EMP) || foraDoEscopo(a.SAIDA_EMP))) situacao = 'fora_escopo';
+      else if (!a) situacao = nota.cancelada_na_prefeitura ? 'cancelada_prefeitura' : 'nao_lancada';
       else if (canceladaSaida || (temEntrada && canceladaEntrada && !temSaida)) situacao = 'cancelada_senior';
       else if (temEntrada) situacao = 'lancada';
       else situacao = 'so_saida';   // emitimos e está no ERP, mas não há nota de entrada correspondente
@@ -378,7 +394,7 @@ const SQL_ENTRADAS = `SELECT n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n
   OUTER APPLY (SELECT TOP 1 fo.CGCCPF, fo.NOMFOR FROM E095FOR fo WHERE fo.CODFOR = n.CODFOR ORDER BY fo.CODFOR) fo
   OUTER APPLY (SELECT TOP 1 fi.NUMCGC, fi.SIGFIL, fi.NOMFIL FROM E070FIL fi WHERE fi.CODEMP = n.CODEMP AND fi.CODFIL = n.CODFIL) fi
   LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
-  WHERE (n.DATENT >= @desde AND n.DATENT <= @ate) OR (n.DATEMI >= @desde AND n.DATEMI <= @ate)`;
+  WHERE ((n.DATENT >= @desde AND n.DATENT <= @ate) OR (n.DATEMI >= @desde AND n.DATEMI <= @ate))${semEmpresasFora('n.CODEMP')}`;
 
 const MARGEM_DIAS = 120;  // a nota pode ser lançada bem depois da competência
 
@@ -388,6 +404,57 @@ const ESPECIE_DE_OUTRO_TIPO = /^(NFE|NF|CTE|CT|MDF|NFC|CUP|CF)$/i;
 // Entrada muito anterior à competência é número reaproveitado pelo prestador, não a nota da planilha
 const DIAS_ANTES_ACEITOS = 31;
 
+// A prefeitura às vezes numera a NFS-e com o ano na frente e zeros de enchimento:
+// 202600000000838 é a nota 838 de 2026. O Senior guarda só o número (838), então o casamento
+// direto nunca achava e a nota aparecia como NÃO LANÇADA mesmo estando lançada — foram 97 notas
+// assim no lote de outubro/2026, 82 delas lançadas de verdade.
+//
+// Só tira o prefixo quando o ano dele confere com o ano da nota. Sem essa trava, "20260000012"
+// de uma nota de 2024 viraria "12" e casaria com qualquer nota 12 do prestador.
+const PREFIXO_ANO = /^(20\d{2})0{3,}([1-9]\d*)$/;   // mesmo padrão que a tela usa em web/src/nfse.js
+const semZeros = (d) => String(d ?? '').replace(/^0+/, '') || '';
+// Data para ler: o alerta vai direto para a tela, e lá a data é dia/mês/ano.
+export const dataBr = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(String(iso ?? '')) ? String(iso).split('-').reverse().join('/') : iso);
+
+/** Formas de buscar o número da planilha no Senior, da mais literal para a mais tolerante. */
+export function numerosDoCasamento(numero, anoDaNota) {
+  const d = digitos(numero);
+  if (!d) return [];
+  const formas = [semZeros(d)];
+  const m = PREFIXO_ANO.exec(d);
+  if (m && (!anoDaNota || m[1] === String(anoDaNota))) formas.push(semZeros(m[2]));
+  return [...new Set(formas.filter(Boolean))];
+}
+
+/**
+ * Entre várias entradas com o mesmo CNPJ + número, qual é de fato esta nota.
+ *
+ * Pegar a primeira da lista dava erro real: é comum o mesmo fornecedor ter uma NFE de produto e
+ * uma NFS de serviço com o mesmo número na mesma filial. A planilha de serviços tomados é sempre
+ * a NFS, então a espécie pesa mais que qualquer outra coisa; depois vem o valor.
+ *
+ * Devolve a escolhida e as que empataram com ela — empate é o que gera dúvida de verdade,
+ * não a simples existência de outra entrada com o mesmo número.
+ */
+export function escolherEntrada(nota, lista) {
+  const ativas = lista.filter((l) => String(l.SITNFC).trim() !== '3');
+  const possiveis = ativas.length ? ativas : lista;
+  if (!possiveis.length) return { entrada: null, empatadas: [] };
+  const esperado = nota.valor ?? nota.valor_liquido;
+  const pontos = (l) => {
+    let p = 0;
+    if (!ESPECIE_DE_OUTRO_TIPO.test(String(l.CODSNF ?? '').trim())) p += 4;
+    if (esperado != null && l.VLRLIQ != null) {
+      if (Math.abs(Number(l.VLRLIQ) - esperado) <= 0.01) p += 2;
+      else if (explicarDiferenca(esperado, Number(l.VLRLIQ), nota.retencoes_planilha ?? 0)) p += 1;
+    }
+    return p;
+  };
+  const melhor = Math.max(...possiveis.map(pontos));
+  const empatadas = possiveis.filter((l) => pontos(l) === melhor);
+  return { entrada: empatadas[0], empatadas };
+}
+
 /**
  * Por que este casamento pode não ser esta nota. Devolve null quando não há dúvida.
  *
@@ -395,8 +462,14 @@ const DIAS_ANTES_ACEITOS = 31;
  * emitido notas de tipos diferentes com o mesmo número, para empresas diferentes do grupo ou em
  * anos diferentes. Sem essa conferência, a tela diria "lançada" para nota que ninguém lançou.
  */
-function duvidasDoCasamento(nota, achada, candidatas, mesmaEmpresa) {
+function duvidasDoCasamento(nota, achada, empatadas, mesmaEmpresa, porPrefixo = false) {
   const duvidas = [];
+  // Casamento pelo número curto é o mais frágil: aqui o valor precisa fechar, senão é outra nota.
+  if (porPrefixo && achada.VLRLIQ != null && nota.valor != null
+      && Math.abs(Number(achada.VLRLIQ) - Number(nota.valor)) > 0.01
+      && !explicarDiferenca(nota.valor, Number(achada.VLRLIQ), nota.retencoes_planilha ?? 0)) {
+    duvidas.push(`o número ${nota.numero} só casou sem o prefixo do ano, e o valor não confere`);
+  }
   if (nota.cnpj_empresa && !mesmaEmpresa.length) {
     duvidas.push(`a entrada está em ${String(achada.SIGFIL ?? '').trim() || 'outra empresa'}, e a planilha diz que o tomador é outro`);
   }
@@ -406,13 +479,13 @@ function duvidasDoCasamento(nota, achada, candidatas, mesmaEmpresa) {
   const entrada = achada.DATENT ? new Date(achada.DATENT).toISOString().slice(0, 10) : null;
   if (base && entrada) {
     const dias = Math.round((new Date(entrada) - new Date(base)) / 86400000);
-    if (dias < -DIAS_ANTES_ACEITOS) duvidas.push(`a entrada é de ${entrada}, bem antes da competência ${base}`);
+    if (dias < -DIAS_ANTES_ACEITOS) duvidas.push(`a entrada é de ${dataBr(entrada)}, bem antes da competência ${dataBr(base)}`);
   }
-  // Mais de uma entrada possível e elas não concordam: não dá para dizer qual é
-  const possiveis = (mesmaEmpresa.length ? mesmaEmpresa : candidatas).filter((l) => String(l.SITNFC).trim() !== '3');
-  if (possiveis.length > 1) {
-    const valores = new Set(possiveis.map((l) => Number(l.VLRLIQ ?? 0).toFixed(2)));
-    if (valores.size > 1) duvidas.push(`há ${possiveis.length} entradas com esse número e valores diferentes`);
+  // Duas entradas igualmente prováveis e com valores diferentes: não dá para dizer qual é.
+  // Só conta o empate: ter outra entrada com o mesmo número não é dúvida se esta é a melhor.
+  if (empatadas.length > 1) {
+    const valores = new Set(empatadas.map((l) => Number(l.VLRLIQ ?? 0).toFixed(2)));
+    if (valores.size > 1) duvidas.push(`há ${empatadas.length} entradas igualmente prováveis com esse número e valores diferentes`);
   }
   return duvidas.length ? duvidas.join('; ') : null;
 }
@@ -443,9 +516,10 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
 
   // Índice: CNPJ do prestador + número da nota. O mesmo par pode ter mais de uma entrada
   // (empresas diferentes do grupo), então guardamos a lista.
+  // Índice sem zeros à esquerda dos dois lados: o Senior grava ora '838', ora '0838'.
   const porChave = new Map();
   for (const l of linhas) {
-    const chave = `${documento(l.CNPJ_PRESTADOR)}|${digitos(l.NUMNFC)}`;
+    const chave = `${documento(l.CNPJ_PRESTADOR)}|${semZeros(digitos(l.NUMNFC))}`;
     if (!porChave.has(chave)) porChave.set(chave, []);
     porChave.get(chave).push(l);
   }
@@ -455,12 +529,14 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
   const resumo = {};
   tx(() => {
     for (const nota of notas) {
-      const candidatas = porChave.get(`${documento(nota.cnpj_prestador)}|${digitos(nota.numero)}`) ?? [];
+      const anoDaNota = (nota.emissao ?? nota.competencia ?? '').slice(0, 4) || null;
+      const formas = numerosDoCasamento(nota.numero, anoDaNota);
+      const achouPor = formas.find((f) => porChave.has(`${documento(nota.cnpj_prestador)}|${f}`)) ?? null;
+      const candidatas = achouPor ? porChave.get(`${documento(nota.cnpj_prestador)}|${achouPor}`) : [];
       // Entre várias, prefere a da mesma empresa tomadora e, depois, a que não está cancelada
       const mesmaEmpresa = nota.cnpj_empresa ? candidatas.filter((l) => documento(l.CNPJ_EMPRESA) === documento(nota.cnpj_empresa)) : [];
       const lista = mesmaEmpresa.length ? mesmaEmpresa : candidatas;
-      const ativa = lista.find((l) => String(l.SITNFC).trim() !== '3');
-      const achada = ativa ?? lista[0] ?? null;
+      const { entrada: achada, empatadas } = escolherEntrada(nota, lista);
 
       let situacao;
       let diferenca = null;
@@ -472,7 +548,7 @@ export async function conferirLote(loteId, { forcar = false } = {}) {
         // Antes de dizer "lançada", confere se a entrada encontrada é mesmo ESTA nota.
         // Verde só sai quando os quatro critérios batem; na dúvida vai para "conferir",
         // porque dar "ok" para quem não está lançado é o erro caro aqui.
-        alerta = duvidasDoCasamento(nota, achada, candidatas, mesmaEmpresa);
+        alerta = duvidasDoCasamento(nota, achada, empatadas, mesmaEmpresa, achouPor !== formas[0]);
         const esperado = nota.valor ?? nota.valor_liquido;
         const lancado = achada.VLRLIQ != null ? Number(achada.VLRLIQ) : null;
         diferenca = esperado != null && lancado != null ? Math.round((esperado - lancado) * 100) / 100 : null;
@@ -591,6 +667,7 @@ export function painelLote(loteId, filtros = {}) {
   const lote = get('SELECT * FROM malha_fina_lotes WHERE id = ?', [loteId]);
   if (!lote) throw new Error('Lote não encontrado');
   let notas = all('SELECT * FROM malha_fina_notas WHERE lote_id = ? ORDER BY competencia, prestador, numero', [loteId]);
+  const todasDoLote = notas;   // o de-para CNPJ → filial precisa do lote inteiro, não do que sobrou dos filtros
   // PJ saem da conta por padrão (filtros.com_pj = '1' traz de volta). O total continua guardado.
   const pj = new Set(listarPj().map((p) => p.cnpj));
   const notasPj = notas.filter((n) => pj.has(n.cnpj_prestador));
@@ -607,16 +684,34 @@ export function painelLote(loteId, filtros = {}) {
     return m.set(n.cnpj_prestador, a);
   }, new Map()).values()].sort((a, b) => b.qtd - a.qtd).slice(0, 10);
 
-  // Empresa do grupo que lançou (ou deveria ter lançado) a nota
+  // Empresa do grupo que lançou — ou que deveria ter lançado — a nota.
+  //
+  // A filial só vem preenchida na nota que já está no Senior. Para a não lançada ela é nula, e o
+  // cartão jogava TODAS em "Sem entrada no Senior": justamente as notas sobre as quais o cartão
+  // deveria falar. Mas o CNPJ do tomador da planilha é o CNPJ da própria filial, então dá para
+  // chegar na filial por ele, aprendendo o de-para com as notas do lote que já casaram.
+  const filialDoCnpj = new Map();
+  for (const n of todasDoLote) {
+    if (n.cnpj_empresa && n.entrada_empresa_chave && !filialDoCnpj.has(n.cnpj_empresa)) {
+      filialDoCnpj.set(n.cnpj_empresa, { chave: n.entrada_empresa_chave, rotulo: n.entrada_empresa });
+    }
+  }
+  const empresaDe = (n) => {
+    if (n.entrada_empresa_chave) return { chave: n.entrada_empresa_chave, rotulo: n.entrada_empresa };
+    const filial = n.cnpj_empresa ? filialDoCnpj.get(n.cnpj_empresa) : null;
+    if (filial) return filial;
+    // CNPJ que nunca apareceu com entrada no Senior: fica com o nome da planilha mesmo
+    return { chave: n.cnpj_empresa ? `cnpj:${n.cnpj_empresa}` : '—', rotulo: n.empresa || 'Sem empresa na planilha' };
+  };
   const porEmpresa = [...notas.reduce((m, n) => {
-    const chave = n.entrada_empresa_chave ?? '—';
-    const a = m.get(chave) ?? { chave, rotulo: n.entrada_empresa ?? 'Sem entrada no Senior', qtd: 0, nao_lancadas: 0, valor: 0 };
+    const { chave, rotulo } = empresaDe(n);
+    const a = m.get(chave) ?? { chave, rotulo, qtd: 0, nao_lancadas: 0, valor: 0 };
     a.qtd += 1;
     if (n.situacao === 'nao_lancada') { a.nao_lancadas += 1; a.valor += n.valor ?? 0; }
     return m.set(chave, a);
   }, new Map()).values()].sort((a, b) => b.nao_lancadas - a.nao_lancadas || b.qtd - a.qtd);
 
-  if (filtros.empresa) notas = notas.filter((n) => (n.entrada_empresa_chave ?? '—') === filtros.empresa);
+  if (filtros.empresa) notas = notas.filter((n) => empresaDe(n).chave === filtros.empresa);
   if (filtros.situacao) notas = notas.filter((n) => n.situacao === filtros.situacao);
   if (filtros.busca) {
     const b = String(filtros.busca).toLowerCase();

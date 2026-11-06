@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   nome TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE COLLATE NOCASE,
   senha_hash TEXT NOT NULL,
-  perfil TEXT NOT NULL CHECK (perfil IN ('admin','fiscal','consulta','auditor','financeiro')),
+  perfil TEXT NOT NULL CHECK (perfil IN ('admin','membro','fiscal','consulta','auditor','financeiro')),
   ativo INTEGER NOT NULL DEFAULT 1,
   ultimo_login TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -559,3 +559,64 @@ CREATE TABLE IF NOT EXISTS compromissos_dia (
   PRIMARY KEY (dia, usuario, categoria)
 );
 CREATE INDEX IF NOT EXISTS ix_compromissos_dia ON compromissos_dia(dia);
+
+-- Carteira permanente de programação: o planejamento é local; a conclusão vem do Senior.
+CREATE TABLE IF NOT EXISTS carteira_filiais (
+  empfil TEXT PRIMARY KEY,
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  atualizado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS carteira_notas (
+  id INTEGER PRIMARY KEY,
+  identidade TEXT NOT NULL UNIQUE,
+  chave TEXT,
+  numero TEXT NOT NULL,
+  serie TEXT,
+  documento TEXT NOT NULL,
+  fornecedor TEXT,
+  cnpj_fornecedor TEXT,
+  empfil TEXT NOT NULL,
+  empresa TEXT,
+  tomador_nome TEXT,
+  tomador_cnpj TEXT,
+  valor REAL,
+  emissao TEXT,
+  recebida_em TEXT,
+  tipo_nota TEXT,
+  prioridade INTEGER NOT NULL DEFAULT 3 CHECK (prioridade BETWEEN 1 AND 3),
+  data_prevista TEXT NOT NULL,
+  data_original TEXT NOT NULL,
+  responsavel_id INTEGER REFERENCES usuarios(id),
+  observacao TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','andamento','bloqueada','lancada')),
+  motivo_bloqueio TEXT NOT NULL DEFAULT '',
+  lancada_em TEXT,
+  senior_ref TEXT,
+  verificada_em TEXT,
+  criada_em TEXT NOT NULL,
+  atualizado_em TEXT NOT NULL,
+  excluida_em TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_carteira_programacao ON carteira_notas(data_prevista, responsavel_id, status);
+CREATE TABLE IF NOT EXISTS carteira_historico (
+  id INTEGER PRIMARY KEY,
+  nota_id INTEGER NOT NULL REFERENCES carteira_notas(id),
+  usuario_id INTEGER REFERENCES usuarios(id),
+  acao TEXT NOT NULL,
+  antes TEXT,
+  depois TEXT NOT NULL,
+  criado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS carteira_importacoes (
+  id INTEGER PRIMARY KEY,
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  arquivo TEXT NOT NULL,
+  dados TEXT NOT NULL,
+  versao TEXT NOT NULL,
+  resumo TEXT NOT NULL,
+  confirmada_em TEXT,
+  criada_em TEXT NOT NULL,
+  excluida_em TEXT,
+  excluida_por INTEGER REFERENCES usuarios(id)
+);
+CREATE INDEX IF NOT EXISTS ix_carteira_historico_nota ON carteira_historico(nota_id, id);

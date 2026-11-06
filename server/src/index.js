@@ -74,7 +74,9 @@ const versao = (() => {
   } catch { return { commit: null, branch: null }; }
 })();
 const iniciadoEm = new Date().toLocaleString('sv-SE');
-app.get('/api/saude', (req, res) => res.json({ ok: true, ia: config.ia.habilitada, versao: versao.commit, branch: versao.branch, iniciado_em: iniciadoEm }));
+app.get('/api/saude', (req, res) => res.json({ ok: true, ia: config.ia.habilitada, versao: versao.commit, branch: versao.branch, iniciado_em: iniciadoEm,
+  recursos: { carteira_lancamentos: true, carteira_importacoes_arquivos: true, perfil_membro: true,
+    senha_sem_complexidade: true, malha_fina_membro: true, carteira_filtros: true, carteira_numeros_longos: true } }));
 app.use('/api', rotasAuthPublicas, rotasOauthPublicas);
 app.use('/api/erp/v1', rotasErpApi);
 app.use('/api', autenticar, rotasAuth, rotasDashboard, rotasDocumentos, rotasEmails, rotasCadastros, rotasRelatorios, rotasFinanceiro, rotasErpAdmin, rotasSefaz);
@@ -98,25 +100,5 @@ app.listen(config.port, () => {
   // Caixas que ficaram "sincronizando" por um reinício no meio da leitura voltam ao normal
   run("UPDATE caixas_email SET status = 'conectada' WHERE status = 'sincronizando' AND oauth_token_enc IS NOT NULL");
   iniciarAgendador();
-  // Pré-carga das telas do Senior com os filtros padrão: quem abrir primeiro não espera o banco
-  setTimeout(async () => {
-    const { seniorConfigurado } = await import('./erp/senior.js');
-    if (!seniorConfigurado()) return;
-    const mes = new Date().toLocaleDateString('sv-SE').slice(0, 7);
-    const tarefas = [
-      ['pendentes (60 dias)', async () => (await import('./erp/pendentes.js')).painelPendentes({ dias: '60' })],
-      ['pendentes (tudo em aberto)', async () => (await import('./erp/pendentes.js')).painelPendentes({ dias: 'tudo' })],
-      ['produtividade (mês)', async () => (await import('./erp/lancamentos.js')).painelLancamentos({ mes, base: 'entrada' })],
-      // mês anterior: é a troca mais comum no começo do mês
-      ['produtividade (mês anterior)', async () => {
-        const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
-        return (await import('./erp/lancamentos.js')).painelLancamentos({ mes: d.toLocaleDateString('sv-SE').slice(0, 7), base: 'entrada' });
-      }],
-      ['histórico mensal', async () => (await import('./erp/lancamentos.js')).historicoMensal()],
-    ];
-    for (const [nome, tarefa] of tarefas) {  // uma por vez, para não sobrecarregar o banco do ERP
-      const t0 = Date.now();
-      try { await tarefa(); log('info', 'senior', `Pré-carga: ${nome} em ${((Date.now() - t0) / 1000).toFixed(1)} s`); } catch (e) { log('alerta', 'senior', `Pré-carga de ${nome} falhou: ${e.message}`); }
-    }
-  }, 3000);
+  // Consultas ao Senior são solicitadas pelas telas, sem agendamento ou pré-carga.
 });

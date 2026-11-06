@@ -6,7 +6,9 @@
 import { getConfig, setConfig } from '../db/index.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { ateOMinuto, comCache, versaoSql } from './cache.js';
+import { semEmpresasFora } from './escopo.js';
 import { CATEGORIAS, categoriaDe, colunasItem, sqlMarcasItem } from './categorias.js';
+import { calendarioFeriados, dataFeriado } from './feriados.js';
 
 // Situação da nota no Senior (E440NFC.SITNFC). Os relatórios do Senior costumam sair só com "Fechada".
 const SITUACOES = { 1: 'Em digitação', 2: 'Fechada', 3: 'Cancelada' };
@@ -19,7 +21,7 @@ const LIMITE_ITENS = 10000;
 //   ex.: 08:00–17:48 com 1 h de almoço = 528 min × 85% ÷ 12 min = 37 notas/dia
 //   (12 min: calibrado pelo histórico do time, ~7 mil notas/mês em 2026; o melhor mês fica perto de 100%)
 // Cada pessoa pode ter jornada própria (minutos por dia e dias da semana, ex.: aprendiz) ou uma meta fixa.
-// Feriados não são descontados.
+// Meta só em dia útil: fim de semana sai pela jornada e feriado sai pelo calendário (ver feriados.js).
 const ESCRITA_FISCAL_PADRAO = ['NELIZI.SILVA', 'MICHELE.PAULUCCI', 'ITHALO.SILVA', 'AMANDA.MARQUES', 'ELZELI.SANTOS',
   'ANA.CLARA', 'GABRIELA.MARTINS', 'EMANUELLE.SILVA', 'ERICA.ARAUJO', 'CELINE.SILVA', 'DYNER.AVILA'];
 const PARAMETROS_PADRAO = { minutos_por_nota: 12, entrada: '08:00', saida: '17:48', intervalo_min: 60, produtividade: 85, dias_semana: [1, 2, 3, 4, 5] };
@@ -37,6 +39,7 @@ const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 /** Metas em vigor, time e a capacidade de cada pessoa. */
 export function metasLancamento() {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
+  const calendario = calendarioFeriados({ extras: cfg.feriados, ignorados: cfg.feriados_ignorados });
   const par = { ...PARAMETROS_PADRAO, ...(cfg.parametros ?? {}) };
   const supervisao = cfg.supervisao ?? SUPERVISAO_PADRAO;
   const supervisores = new Set(supervisao.map(nomeChave));
@@ -63,10 +66,12 @@ export function metasLancamento() {
     escrita_fiscal: membros, supervisao, jornadas: cfg.jornadas ?? JORNADAS_PADRAO, pessoas: cfg.pessoas ?? {},
     equipeDe, jornadaDe,
     metaDe: (usuario) => jornadaDe(usuario)?.meta_dia ?? null,
-    /** Meta da pessoa numa data (0 se ela não trabalha nesse dia da semana). */
+    feriados: calendario,
+    /** Meta da pessoa numa data (0 se ela não trabalha nesse dia da semana ou se é feriado). */
     metaNoDia: (usuario, dia) => {
       const j = jornadaDe(usuario);
       if (!j) return 0;
+      if (calendario.feriadoEm(dia)) return 0;
       return j.dias_semana.includes(new Date(`${dia}T12:00:00Z`).getUTCDay()) ? j.meta_dia : 0;
     },
   };
@@ -80,8 +85,10 @@ export const rotuloDias = (lista) => lista.map((d) => DIAS_SEMANA[d]).join(', ')
  *   supervisao: [nomes]      (lançam, mas ficam fora da meta e da média por pessoa)
  *   jornadas: { nome: { minutos_dia, dias_semana } | null }   (null = jornada padrão)
  *   pessoas: { nome: número | null }                           (meta fixa; null = pela jornada)
+ *   feriados: { 'AAAA-MM-DD': nome } | ['AAAA-MM-DD']          (estadual, municipal, recesso)
+ *   feriados_ignorados: ['AAAA-MM-DD']                         (dias da lista nacional em que se trabalha)
  */
-export function salvarMetas({ parametros, escrita_fiscal: time, supervisao, jornadas, pessoas } = {}) {
+export function salvarMetas({ parametros, escrita_fiscal: time, supervisao, jornadas, pessoas, feriados, feriados_ignorados: ignorados } = {}) {
   const cfg = getConfig('metas_lancamento', {}) ?? {};
   const num = (v) => (v === null || v === '' || v === undefined || !(Number(v) > 0) ? null : Math.round(Number(v) * 10) / 10);
   const dias = (l) => (Array.isArray(l) ? [...new Set(l.map(Number).filter((d) => d >= 0 && d <= 6))].sort() : null);
@@ -109,6 +116,13 @@ export function salvarMetas({ parametros, escrita_fiscal: time, supervisao, jorn
   for (const [nome, v] of Object.entries(pessoas ?? {})) {
     if (num(v) == null) delete cfg.pessoas[nome]; else cfg.pessoas[nome] = num(v);
   }
+  const datas = (l) => [...new Set((Array.isArray(l) ? l : []).map(dataFeriado).filter(Boolean))].sort();
+  if (feriados !== undefined) {
+    cfg.feriados = Array.isArray(feriados)
+      ? Object.fromEntries(datas(feriados).map((d) => [d, null]))
+      : Object.fromEntries(datas(Object.keys(feriados ?? {})).map((d) => [d, String(feriados[d] ?? '').trim() || null]));
+  }
+  if (ignorados !== undefined) cfg.feriados_ignorados = datas(ignorados);
   delete cfg.padrao; // meta padrão manual antiga: agora vem da jornada
   setConfig('metas_lancamento', cfg);
   const { equipeDe, jornadaDe, metaDe, metaNoDia, ...r } = metasLancamento();
@@ -117,7 +131,10 @@ export function salvarMetas({ parametros, escrita_fiscal: time, supervisao, jorn
 
 // Tipo de nota: itens lançados de produto (E440IPC) e serviço (E440ISC); combustível e bagaço/madeira pelos
 // itens do XML recebido (E000IPC) ou pelo nome do fornecedor (posto)
-const SQL = `SELECT n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n.DATGER, n.HORGER, n.USUGER, n.VLRLIQ, n.SITNFC,
+// Empresa fora do escopo do time não entra na produtividade (ver erp/escopo.js)
+const SEM_EMPRESAS_FORA = semEmpresasFora('n.CODEMP');
+
+const SQL = `SELECT n.CODEMP, n.CODFIL, n.CODFOR, n.NUMNFC, n.CODSNF, n.DATENT, n.DATGER, n.HORGER, n.USUGER, n.VLRLIQ, n.SITNFC,
     u.NOMUSU, fi.SIGFIL, fi.NOMFIL, fo.NOMFOR, n.CHVNEL,
     CASE WHEN EXISTS (SELECT 1 FROM E440IPC ip1 WHERE ip1.CODEMP = n.CODEMP AND ip1.CODFIL = n.CODFIL AND ip1.CODFOR = n.CODFOR AND ip1.NUMNFC = n.NUMNFC AND ip1.CODSNF = n.CODSNF) THEN 1 ELSE 0 END AS TEM_PRODUTO,
     CASE WHEN EXISTS (SELECT 1 FROM E440ISC is1 WHERE is1.CODEMP = n.CODEMP AND is1.CODFIL = n.CODFIL AND is1.CODFOR = n.CODFOR AND is1.NUMNFC = n.NUMNFC AND is1.CODSNF = n.CODSNF) THEN 1 ELSE 0 END AS TEM_SERVICO{marcas},
@@ -128,7 +145,7 @@ const SQL = `SELECT n.CODEMP, n.CODFIL, n.NUMNFC, n.CODSNF, n.DATENT, n.DATGER, 
   LEFT JOIN E070FIL fi ON fi.CODEMP = n.CODEMP AND fi.CODFIL = n.CODFIL
   LEFT JOIN E095FOR fo ON fo.CODFOR = n.CODFOR
   LEFT JOIN E000NFC x ON x.CHVNEL = n.CHVNEL
-  WHERE {campoData} >= @desde AND {campoData} <= @ate`;
+  WHERE {campoData} >= @desde AND {campoData} <= @ate${SEM_EMPRESAS_FORA}`;
 
 const iso = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v ? String(v).slice(0, 10) : null);
 const horaDe = (h) => (h == null ? null : Math.min(23, Math.floor(Number(h) / 60)));  // minutos do dia -> hora
@@ -180,7 +197,7 @@ const soma = (lista, f) => Math.round(lista.reduce((s, x) => s + (f(x) ?? 0), 0)
  * Painel de lançamentos: quem lançou, quando e quanto.
  * filtros: de, ate (AAAA-MM-DD), dias (padrão 30), mes (AAAA-MM), usuario, codemp
  */
-export async function painelLancamentos(filtros = {}) {
+export async function painelLancamentos(filtros = {}, opcoesInternas = {}) {
   if (!seniorConfigurado()) throw new Error('Senior não configurado');
   const mes = /^\d{4}-\d{2}$/.test(String(filtros.mes ?? '')) ? String(filtros.mes) : null;
   const periodo = mes
@@ -201,13 +218,13 @@ export async function painelLancamentos(filtros = {}) {
   const cols = await colunasItem();
   const sqlLancadas = SQL.replace('{marcas}', sqlMarcasItem(cols, 'n.CHVNEL', 'fo.NOMFOR'));
   const linhas = await comCache(
-    `lancamentos2|${base}|${ateOMinuto(de)}|${ateOMinuto(ate)}`,
+    `lancamentos2|${versaoSql(sqlLancadas)}|${base}|${ateOMinuto(de)}|${ateOMinuto(ate)}`,
     filtros.forcar === '1' ? 0 : 300_000,
     () => consultar(sqlLancadas.replaceAll('{campoData}', campoData), de, { ate }),
   );
 
   let itens = linhas.map((l) => ({
-    codemp: l.CODEMP, codfil: l.CODFIL,
+    codemp: l.CODEMP, codfil: l.CODFIL, codfor: l.CODFOR, chave: String(l.CHVNEL ?? '').trim() || null,
     empresa: String(l.SIGFIL ?? '').trim() || String(l.NOMFIL ?? '').trim() || `Emp ${l.CODEMP}/${l.CODFIL}`,
     numero: l.NUMNFC, serie: String(l.CODSNF ?? '').trim() || null,
     fornecedor: String(l.NOMFOR ?? '').trim() || null,
@@ -223,6 +240,11 @@ export async function painelLancamentos(filtros = {}) {
     get categoria_rotulo() { return CATEGORIAS[this.categoria] ?? this.categoria; },
     dias_ate_lancar: l.DIAS_ATE_LANCAR != null ? Math.max(0, Number(l.DIAS_ATE_LANCAR)) : null,
   }));
+  // O Dashboard conta documentos do ERP, sem multiplicar uma nota por vínculos de XML.
+  // Os relatórios existentes conservam sua forma de consulta e limite de apresentação.
+  if (opcoesInternas.documentosDistintos) {
+    itens = [...new Map(itens.map((i) => [JSON.stringify([i.codemp, i.codfil, i.codfor, i.numero, i.serie]), i])).values()];
+  }
   // Filtros em cascata: cada clique num gráfico vira um filtro (dia, hora, pessoa, empresa, origem, situação).
   // Cada gráfico é montado com todos os filtros MENOS o dele, para continuar mostrando as outras barras
   // (a selecionada fica destacada) e permitir trocar a escolha.
@@ -380,6 +402,10 @@ export async function painelLancamentos(filtros = {}) {
       escrita_fiscal: metas.escrita_fiscal, jornadas: metas.jornadas, pessoas: metas.pessoas,
       // time completo com a jornada de cada um (inclusive quem não lançou nada no período)
       time: metas.escrita_fiscal.map((u) => ({ usuario: u, ...jornadaDe(u), dias: rotuloDias(jornadaDe(u).dias_semana), meta_periodo: metaPessoa(u, diasPeriodo), meta_ate_hoje: metaPessoa(u, diasAteHoje) })),
+      // feriados que caíram em dia de semana no período: são os que de fato tiraram meta
+      feriados: diasPeriodo.map((d) => ({ dia: d, ...metas.feriados.feriadoEm(d) }))
+        .filter((f) => f.nome && ![0, 6].includes(new Date(`${f.dia}T12:00:00Z`).getUTCDay())),
+      feriados_empresa: metas.feriados.extras, feriados_ignorados: metas.feriados.ignorados,
     },
     por_equipe: porEquipe,
     empresas_disponiveis: [...porEmpresa].sort((a, b) => a.rotulo.localeCompare(b.rotulo, 'pt-BR')),
@@ -402,7 +428,7 @@ export async function painelLancamentos(filtros = {}) {
     por_situacao: porSituacao,
     // Lista das notas lançadas (com os filtros em cascata), mais recentes primeiro
     itens: itens.sort((a, b) => String(b.geracao).localeCompare(String(a.geracao)) || ((b.hora ?? 0) * 60 + (b.minuto ?? 0)) - ((a.hora ?? 0) * 60 + (a.minuto ?? 0)))
-      .slice(0, LIMITE_ITENS).map((i) => ({ ...i, horario: i.hora != null ? `${String(i.hora).padStart(2, '0')}:${String(i.minuto ?? 0).padStart(2, '0')}` : null })),
+      .slice(0, opcoesInternas.completo ? undefined : LIMITE_ITENS).map((i) => ({ ...i, horario: i.hora != null ? `${String(i.hora).padStart(2, '0')}:${String(i.minuto ?? 0).padStart(2, '0')}` : null })),
     total_itens: itens.length,
   };
 }
@@ -418,7 +444,7 @@ const SQL_MENSAL_CATEGORIA = `SELECT YEAR(n.DATGER) AS ANO, MONTH(n.DATGER) AS M
   FROM E440NFC n
   LEFT JOIN E095FOR fo ON fo.CODFOR = n.CODFOR
   LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
-  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'`;
+  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'${SEM_EMPRESAS_FORA}`;
 
 /** Quantas notas de cada tipo (combustível, produto, serviço, frete...) foram lançadas em cada mês. */
 async function categoriasPorMes(desde, ate, forcar) {
@@ -448,7 +474,7 @@ const SQL_MENSAL = `SELECT YEAR(n.DATGER) AS ANO, MONTH(n.DATGER) AS MES, n.USUG
     COUNT(*) AS NOTAS, COUNT(DISTINCT n.DATGER) AS DIAS
   FROM E440NFC n
   LEFT JOIN r999usu u ON u.CODUSU = n.USUGER
-  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'
+  WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'${SEM_EMPRESAS_FORA}
   GROUP BY YEAR(n.DATGER), MONTH(n.DATGER), n.USUGER`;
 
 /**

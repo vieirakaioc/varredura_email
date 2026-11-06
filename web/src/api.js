@@ -7,7 +7,7 @@ export const sessao = {
   limpar() { try { sessionStorage.removeItem(CHAVE); } catch { /* sem storage */ } },
 };
 
-export class ErroApi extends Error {
+class ErroApi extends Error {
   constructor(msg, status) { super(msg); this.status = status; }
 }
 

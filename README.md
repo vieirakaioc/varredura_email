@@ -19,6 +19,76 @@ npm start                   # http://localhost:3000
 Desenvolvimento com recarga automática: `npm run dev` (API na porta 3000 e front na 5173 com proxy).
 Testes: `npm test`.
 
+## Programação diária e gestão à vista
+
+Em **Pendentes de lançamento → Filas e compromisso → Carteira de notas**, cadastre os
+responsáveis por empresa/filial. Use os usuários de acesso do sistema (administrador ou fiscal).
+O vínculo é aplicado na importação às notas novas ou ainda sem responsável; notas já atribuídas
+preservam a pessoa definida. É possível reatribuir uma nota pela tela ou pela planilha.
+
+1. Exporte a lista de **Pendentes de lançamento** para Excel. O arquivo inclui **Prioridade**,
+   **Data prevista**, **Responsável da programação** e **Observação da programação**.
+2. Defina a prioridade como **Urgente/1**, **Alta/2** ou **Normal/3**. Para novas notas sem data,
+   vale o dia selecionado na carteira. O responsável pode ficar em branco para usar o vínculo
+   da filial; para escolher outra pessoa, informe o e-mail do usuário em **Responsável da programação**.
+   A coluna antiga **Responsável** continua indicando o departamento.
+3. Em **Importar programação**, escolha o `.xlsx`, confira a prévia e confirme. Linhas inválidas
+   impedem a importação inteira, com indicação do número da linha. A prévia expira em duas horas
+   e precisa ser refeita se a carteira ou os responsáveis mudarem.
+4. Reimporte diariamente: notas novas se somam à carteira; notas existentes são atualizadas sem
+   duplicar. Campos de programação vazios preservam o conteúdo existente. Para limpar uma
+   observação ou remover o responsável, use **Atualizar nota** na tela. Notas ausentes do arquivo
+   e notas já concluídas ficam preservadas.
+5. A equipe usa **Minha fila**, pode iniciar o trabalho ou registrar um bloqueio com motivo.
+   Mudanças de prazo preservam o prazo original e o histórico de quem alterou e quando.
+
+A chave de acesso identifica NF-e/CT-e (mantenha os 44 dígitos como texto no Excel). Sem chave,
+a identidade combina empresa/filial, CNPJ/CPF do fornecedor, documento, número e série.
+Mantenha esses campos estáveis em cada importação. Documentos sem filial identificada devem
+ser corrigidos antes da importação.
+
+Com o Senior configurado, a carteira consulta as entradas a cada cinco minutos e no botão
+**Conferir no Senior**. Apenas entradas **fechadas (SITNFC = 2)** confirmam a conclusão;
+casamentos ambíguos não concluem. Se a entrada deixar de estar fechada, a nota retorna à
+carteira. O processo só lê o Senior. Sem conexão, a carteira e a programação continuam
+disponíveis, e o status confirmado anteriormente é preservado até uma conferência bem-sucedida.
+
+O painel separa a conclusão das notas programadas para o dia das notas da carteira lançadas
+naquele dia. A produtividade total, incluindo notas fora do plano, permanece nas abas
+**Produtividade do lançamento** e **Dashboard**. As novas tabelas locais são criadas
+automaticamente ao iniciar a versão atualizada do servidor; fazem parte do backup da pasta `data/`.
+
+O botão **Importações** lista os arquivos confirmados e oferece **Excluir importação**, com
+prévia da quantidade de notas afetadas. Notas exclusivas do arquivo saem da carteira; notas
+presentes em outras importações ativas continuam com a programação atual. A exclusão fica
+registrada para auditoria e não altera documentos, PDFs, cadastros de responsáveis ou o Senior.
+É possível reenviar a mesma planilha para repetir um teste.
+
+A tabela da carteira também mostra **Tomador**, **CNPJ tomador**, **PDF da nota** e **Boleto**.
+Os filtros **Empresa, Filial, Tomador, Tipo de nota, Responsável e Prioridade** podem ser
+combinados com Status e busca. A empresa selecionada limita as opções de filial; os indicadores,
+o quadro e a exportação respeitam os filtros aplicados.
+
+Os cabeçalhos da carteira alternam a ordenação crescente/decrescente. Número da nota e fornecedor
+podem ser ordenados separadamente, inclusive para números longos; valores, prazos e prioridades
+usam seus valores próprios. A ordenação vale para todas as páginas e para a exportação; **Ordem padrão**
+restaura a sequência de atrasos, prioridade e prazo.
+
+Em **Filas e compromisso → Dashboard**, o dia selecionado mostra documentos distintos fechados
+no Senior pela data de lançamento (DATGER), produção por pessoa/tipo e cumprimento do compromisso.
+As pendências representam a consulta atual ao VIA, limitada às entradas ativas do grupo para a
+Escrita Fiscal. A antiguidade usa exclusivamente o recebimento no VIA (E000NFC.DATENT); notas sem
+essa referência válida são identificadas à parte. Emissão e competência não substituem recebimento.
+Falhas em uma fonte são indicadas sem apresentar volume desconhecido como zero.
+Os arquivos são localizados na base de **Todas as notas** pela chave de acesso. Sem chave,
+o vínculo exige CNPJ do fornecedor, número, tipo de documento e CNPJ do tomador (e série,
+quando informada), com uma única correspondência. A exportação de Pendentes inclui o
+tomador e seu CNPJ. Se o documento ou o PDF ainda não existir, aparece **Não localizado**;
+os vínculos são consultados novamente a cada atualização, incluindo arquivos recebidos depois
+da planilha. Havendo vários boletos, cada PDF aparece com seu próprio botão.
+Quando o CNPJ do tomador estiver ausente, o sistema tenta completá-lo pelo cadastro da empresa/filial
+no Senior, após a importação e nas conferências automáticas, preservando o CNPJ informado na planilha.
+
 Sem o seed, o primeiro start cria o administrador `ADMIN_EMAIL` com a senha de `ADMIN_SENHA` (ou uma senha aleatória, que aparece no console).
 Com o seed, os usuários de demonstração são `admin@`, `joao.fiscal@`, `maria.fiscal@`, `consulta@`, `auditor@` e `financeiro@validador.local`, todos com a senha `demo2026fiscal`.
 **Não use o seed em produção.**
@@ -91,10 +161,23 @@ A prioridade na fila leva em conta erros, valor, cancelamento e **vencimento das
 | Perfil | Pode |
 |---|---|
 | Administrador | tudo (cadastros, regras, caixas, usuários, integrações) |
+| Membro | Carteira de notas e consulta da Malha fina: vê a programação e os PDFs, registra andamento/bloqueio apenas das notas atribuídas a ele |
 | Fiscal | visualizar, validar e aprovar, tratar alertas e escrituração, relatórios |
 | Consulta | somente visualização (sem histórico) |
 | Auditor | visualização, histórico, relatórios e trilha de auditoria |
 | Financeiro | painel de contas a pagar e registro de programação/pagamento. Pagar título de NF não aprovada exige justificativa. |
+
+Para o acesso restrito da equipe, selecione **Membro** em **Usuários → Perfil de acesso**.
+Esse é o perfil padrão ao criar novos usuários. O membro entra diretamente em `/carteira`
+e pode consultar `/malha-fina`; os demais menus e abas não ficam disponíveis. O servidor também bloqueia as APIs de outras
+páginas, importações, exclusões, configuração de responsáveis e alterações de prazo/prioridade.
+Os PDFs acessíveis ao membro são apenas os vinculados a notas ativas da carteira. O administrador
+mantém acesso completo; os perfis anteriores continuam disponíveis para compatibilidade.
+Mudanças de perfil valem para a próxima requisição, inclusive em sessões já abertas.
+Senhas de acesso podem conter qualquer texto não vazio, sem tamanho mínimo ou combinação
+obrigatória de caracteres. Na edição do usuário, senha em branco mantém a senha atual.
+Na Malha fina, o membro consulta lotes, filtra resultados e exporta a tabela. A importação,
+exclusão, reconferência e alteração da lista de prestadores PJ ficam fora desse acesso de consulta.
 
 ### IA (opcional)
 

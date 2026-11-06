@@ -37,6 +37,17 @@ export function filtroDocumentos(q) {
   if (q.categoria) { w.push("EXISTS (SELECT 1 FROM inconsistencias x WHERE x.documento_id = d.id AND x.status = 'aberta' AND x.categoria = :categoria)"); p.categoria = q.categoria; }
   if (q.atrasadas === '1') w.push("d.prazo < date('now','localtime') AND d.status IN ('PENDENTE','INCONSISTENTE','DUPLICADA','AGUARDANDO_XML','CORRECAO_SOLICITADA')");
   if (q.cancelada === '1') w.push("d.situacao_sefaz = 'cancelada'");
+  // Situação do título no Senior ("foi pago ou não"), exposta na coluna Pagamento de Todas as notas.
+  // Títulos cancelados e substituídos (SITTIT 'LS') não contam, igual ao SQL_PAGAMENTO_SENIOR.
+  const TITULO_VALE = "t.documento_id = d.id AND t.situacao_grupo <> 'cancelado' AND t.situacao <> 'LS'";
+  const EM_ABERTO = `${TITULO_VALE} AND t.situacao_grupo IN ('aberto','em_pagamento')`;
+  if (q.pagamento === 'pago') {
+    w.push(`EXISTS (SELECT 1 FROM senior_titulos t WHERE ${TITULO_VALE})
+      AND NOT EXISTS (SELECT 1 FROM senior_titulos t WHERE ${EM_ABERTO})`);
+  }
+  if (q.pagamento === 'aberto') w.push(`EXISTS (SELECT 1 FROM senior_titulos t WHERE ${EM_ABERTO})`);
+  if (q.pagamento === 'vencido') w.push(`EXISTS (SELECT 1 FROM senior_titulos t WHERE ${EM_ABERTO} AND t.vencimento < date('now','localtime'))`);
+  if (q.pagamento === 'sem_titulo') w.push(`NOT EXISTS (SELECT 1 FROM senior_titulos t WHERE ${TITULO_VALE})`);
   if (q.severidade) { w.push("EXISTS (SELECT 1 FROM inconsistencias x WHERE x.documento_id = d.id AND x.status = 'aberta' AND x.severidade = :sev)"); p.sev = q.severidade; }
   if (q.q) {
     w.push('(d.numero LIKE :q OR d.chave_acesso LIKE :q OR d.emitente_nome LIKE :q OR d.destinatario_nome LIKE :q OR d.emitente_cnpj LIKE :qd)');

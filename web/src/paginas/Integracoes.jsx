@@ -35,7 +35,7 @@ SENIOR_DB_SENHA=********`}</pre>
             <Kpi rotulo="Não lançadas" valor={numero(dados.nao_lancadas)} cor="var(--pend)" />
             <Kpi rotulo="Ainda não conferidas" valor={numero(dados.nao_verificadas)} />
           </div>
-          <div className="muted pequeno">Banco: {dados.tipo} · {u ? `última conciliação ${data(u.em, true)}: ${u.lancamentos_senior} lançamento(s) lido(s) do Senior, ${u.aprovadas_automaticamente} nota(s) saíram da fila` : 'ainda não conciliado'} · a conciliação roda junto com a leitura dos e-mails (a cada 10 min).</div>
+          <div className="muted pequeno">Banco: {dados.tipo} · {u ? `última conciliação ${data(u.em, true)}: ${u.lancamentos_senior} lançamento(s) lido(s) do Senior, ${u.aprovadas_automaticamente} nota(s) saíram da fila` : 'ainda não conciliado'} · a conciliação é feita somente pelo botão.</div>
           {teste && (
             <div className="aviso info pequeno">
               Conexão OK: {teste.registros_30_dias} nota(s) de entrada nos últimos 30 dias. Colunas: {teste.colunas.join(', ') || '—'}
@@ -65,7 +65,7 @@ export default function Integracoes() {
       <div className="pagina">
         <Erro erro={erro} />
         <CartaoSenior />
-        {carregando ? <Carregando /> : (
+        {carregando && !dados ? <Carregando /> : dados && (
           <>
             <div className="grade grade-kpi"><Kpi rotulo="Aprovadas aguardando integração" valor={numero(dados.pendentes)} cor="var(--pend)" /></div>
             <Cartao titulo="Chaves de acesso" semPadding>

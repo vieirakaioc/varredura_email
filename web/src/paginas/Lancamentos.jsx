@@ -688,7 +688,7 @@ function HistoricoMensal() {
         </table>
       </div>
       <p className="muted pequeno" style={{ marginBottom: 0 }}>
-        Meta do mês = dias úteis de cada pessoa do time que lançou no mês × meta diária dela (sem descontar feriados e férias).
+        Meta do mês = dias úteis de cada pessoa do time que lançou no mês × meta diária dela. Fim de semana e feriado não contam; férias ainda não são descontadas.
         Min/nota real = tempo produtivo nos dias em que cada um lançou ÷ notas do time. Passe o mouse em “Pessoas” para ver quem entrou na conta.
       </p>
     </Cartao>
@@ -799,7 +799,7 @@ function EditorMetas({ metas, pessoas, aoSalvar }) {
       </div>
       <div className="linha" style={{ gap: 8, marginTop: 8 }}>
         <button className="btn pequeno" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</button>
-        <span className="muted pequeno">{time.size} pessoa(s) no time · feriados não são descontados</span>
+        <span className="muted pequeno">{time.size} pessoa(s) no time · feriados nacionais já saem da meta</span>
       </div>
       <Erro erro={erro} />
     </div>

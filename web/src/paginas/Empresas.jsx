@@ -51,7 +51,7 @@ export default function Empresas() {
       <div className="pagina">
         <Erro erro={erro} />
         <Cartao semPadding>
-          {carregando ? <Carregando /> : (
+          {carregando && !dados ? <Carregando /> : (
             <Tabela linhas={dados} onClique={pode('administrar') ? (l) => setEditar(l) : undefined} colunas={[
               { campo: 'razao_social', titulo: 'Empresa', render: (l) => <div><strong>{l.nome_fantasia || l.razao_social}</strong><div className="muted pequeno">{l.razao_social}</div></div> },
               { campo: 'cnpj', titulo: 'CNPJ', render: (l) => <span className="mono">{cnpj(l.cnpj)}</span> },

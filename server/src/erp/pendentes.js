@@ -7,6 +7,7 @@ import { all, get, getConfig, run } from '../db/index.js';
 import { log } from '../util/log.js';
 import { consultar, seniorConfigurado } from './senior.js';
 import { comCache, versaoSql } from './cache.js';
+import { semEmpresasFora } from './escopo.js';
 import { CATEGORIAS, categoriaDe, colunasItem, regraBiomassa, sqlMarcasItem } from './categorias.js';
 
 const ESPECIES = { NFE: 'NF-e', CTE: 'CT-e', NF2: 'NF-e (série 2)', NF: 'Nota fiscal', CTR: 'CT-e (redespacho)' };
@@ -29,6 +30,10 @@ function classificar(i) {
 const LIMITE_ITENS = 20000;
 // Notas não lançadas aparecem sempre, qualquer que seja o período escolhido, até esta idade
 const DIAS_ABERTAS = 365;
+// Empresas fora do escopo do time (ver erp/escopo.js): notas destinadas a CNPJ de fora do grupo
+// continuam entrando, porque não são filial de empresa nenhuma.
+const SEM_EMPRESAS_FORA = semEmpresasFora('fi.CODEMP', { aceitaNulo: true });
+const SEM_EMPRESAS_FORA_L = semEmpresasFora('n.CODEMP');
 const SITUACOES = { pendente: 'Pendente', inconsistente: 'Inconsistente', incompleta: 'Incompleta', processada: 'Processada' };
 
 // OUTER APPLY (TOP 1) em vez de LEFT JOIN: o mesmo CNPJ pode ter vários fornecedores/filiais no Senior e a
@@ -95,63 +100,6 @@ export function salvarMotivo({ chave, motivo, observacao, responsavel, prazo, re
   return get('SELECT * FROM pendencia_motivos WHERE chave = ?', [k]);
 }
 
-/**
- * Exceções: pendências que saíram da mão do time e dependem de alguém de fora.
- *
- * O prazo é de retorno de quem precisa resolver, não de lançamento. Sem retorno dentro do prazo
- * a exceção vence — é o que a supervisão cobra, e é o único jeito de o resíduo mensal parar de
- * virar estoque invisível.
- */
-export async function painelExcecoes(filtros = {}) {
-  const base = await painelPendentes({ ...filtros, dias: filtros.dias ?? 'tudo', situacoes: 'todas' });
-  const hojeIso = hoje();
-  const pendentes = (base.itens ?? []).filter((i) => !i.lancada && !i.nossa_saida);
-  const comMotivo = pendentes.filter((i) => i.motivo);
-  const marcadas = new Map(all('SELECT * FROM pendencia_motivos').map((m) => [m.chave, m]));
-
-  const itens = comMotivo.map((i) => {
-    const m = marcadas.get(i.chave) ?? {};
-    const atrasada = Boolean(m.prazo) && !m.retorno_em && m.prazo < hojeIso;
-    return {
-      ...i,
-      responsavel_externo: m.responsavel ?? null, prazo: m.prazo ?? null,
-      retorno_em: m.retorno_em ?? null, retorno_obs: m.retorno_obs ?? null,
-      atrasada,
-      // Sem prazo não dá para cobrar ninguém: é a primeira coisa a corrigir na lista
-      sem_prazo: !m.prazo, sem_responsavel: !m.responsavel,
-      dias_sem_retorno: m.atualizado_em && !m.retorno_em ? Math.max(0, diasEntre(String(m.atualizado_em).slice(0, 10), hojeIso)) : null,
-    };
-  });
-
-  const agrupar = (chave, rotulo) => [...itens.reduce((mapa, i) => {
-    const k = chave(i) ?? '—';
-    const a = mapa.get(k) ?? { chave: k, rotulo: rotulo(i), qtd: 0, valor: 0, atrasadas: 0 };
-    a.qtd += 1; a.valor += i.valor ?? 0; a.atrasadas += i.atrasada ? 1 : 0;
-    return mapa.set(k, a);
-  }, new Map()).values()].sort((a, b) => b.qtd - a.qtd);
-
-  return {
-    periodo: base.periodo, atualizado_em: new Date().toISOString(),
-    fonte: 'XMLs do recebimento do Senior ainda não lançados, com motivo registrado neste painel',
-    indicadores: {
-      pendentes: pendentes.length,
-      com_motivo: comMotivo.length,
-      sem_motivo: pendentes.length - comMotivo.length,
-      pct_com_motivo: pendentes.length ? Math.round((comMotivo.length / pendentes.length) * 100) : null,
-      atrasadas: itens.filter((i) => i.atrasada).length,
-      sem_prazo: itens.filter((i) => i.sem_prazo).length,
-      sem_responsavel: itens.filter((i) => i.sem_responsavel).length,
-      respondidas: itens.filter((i) => i.retorno_em).length,
-      valor: soma(itens, (i) => i.valor),
-    },
-    por_motivo: agrupar((i) => i.motivo, (i) => i.motivo_rotulo),
-    por_responsavel: agrupar((i) => i.responsavel_externo, (i) => i.responsavel_externo ?? 'Sem responsável definido'),
-    por_empresa: agrupar(chaveEmpresa, (i) => i.empresa),
-    motivos_disponiveis: MOTIVOS,
-    itens: itens.sort((a, b) => (b.atrasada - a.atrasada) || (b.dias_parada ?? 0) - (a.dias_parada ?? 0)).slice(0, 2000),
-  };
-}
-
 // ------------------------------------------------------------------ responsável pelo lançamento
 // Notas de bagaço, madeira, cavaco etc. são lançadas pelo time de Faturamento, não pela Escrita Fiscal.
 // Reconhecidas pelos itens do XML no Senior (E000IPC): descrição do produto e/ou NCM.
@@ -163,13 +111,13 @@ const SQL_SERIE = `SELECT 'R' AS TIPO, CAST(x.DATENT AS date) AS D, fi.CODEMP, f
   FROM E000NFC x
   CROSS APPLY (SELECT TOP 1 fi.CODEMP, fi.CODFIL FROM E070FIL fi WHERE fi.NUMCGC = x.CGCFIL ORDER BY fi.CODEMP, fi.CODFIL) fi
   OUTER APPLY (SELECT TOP 1 1 AS L FROM E440NFC n WHERE n.CHVNEL = x.CHVNEL AND n.SITNFC <> '3') nl
-  WHERE x.DATENT >= @desde AND x.DATENT <= @ate
+  WHERE x.DATENT >= @desde AND x.DATENT <= @ate${SEM_EMPRESAS_FORA}
   GROUP BY CAST(x.DATENT AS date), fi.CODEMP, fi.CODFIL
   UNION ALL
   SELECT 'L', CAST(n.DATGER AS date), n.CODEMP, n.CODFIL, COUNT(*), 0
   FROM E440NFC n
   WHERE n.DATGER >= @desde AND n.DATGER <= @ate AND n.SITNFC <> '3'
-    AND EXISTS (SELECT 1 FROM E000NFC x WHERE x.CHVNEL = n.CHVNEL)
+    AND EXISTS (SELECT 1 FROM E000NFC x WHERE x.CHVNEL = n.CHVNEL)${SEM_EMPRESAS_FORA_L}
   GROUP BY CAST(n.DATGER AS date), n.CODEMP, n.CODFIL`;
 
 // Modelo do documento pela chave de acesso (posições 21-22), usado enquanto a nota não tem série no Senior
@@ -215,6 +163,9 @@ function montarItem(l, canceladas, dia) {
     especie_rotulo: ESPECIES[String(l.CODSNF ?? '').trim()] ?? modeloDaChave(chave) ?? 'Não identificado',
     tipo: TIPOS[l.TIPNFE] ?? `Tipo ${l.TIPNFE}`,
     emissao: iso(l.DATEMI), recebido_em: recebido,
+    // Preserva o campo original para indicadores que exigem data de recebimento confirmada.
+    // `recebido_em` acima mantém o fallback histórico usado pela tela de pendências.
+    recebido_via_em: iso(l.DATA_RECEBIMENTO),
     valor: l.VLRLIQ != null ? Number(l.VLRLIQ) : null,
     cnpj_fornecedor: cnpjFornecedor, fornecedor: String(l.NOMFOR ?? '').trim() || null,
     codemp: dest.CODEMP, codfil: dest.CODFIL,
@@ -288,7 +239,7 @@ function montarItemClassificado(l, canceladas, dia) {
  * Painel de notas pendentes de lançamento.
  * filtros: de, ate, dias (padrão 60), codemp, codfil, especie, situacao (pendentes|lancadas|todas), fornecedor
  */
-export async function painelPendentes(filtros = {}) {
+export async function painelPendentes(filtros = {}, opcoesInternas = {}) {
   if (!seniorConfigurado()) throw new Error('Senior não configurado');
   // Período: mês fechado (AAAA-MM) ou os últimos N dias
   const mes = /^\d{4}-\d{2}$/.test(String(filtros.mes ?? '')) ? String(filtros.mes) : null;
@@ -306,9 +257,15 @@ export async function painelPendentes(filtros = {}) {
   // então ela fica em cache por cinco minutos ("Atualizar" na tela força a leitura no banco).
   const cols = await colunasItem();
   const marcas = sqlMarcasItem(cols, 'x.CHVNEL', 'fo.NOMFOR');
-  const sql = SQL
+  let sql = SQL
     .replace('{marcas}', marcas)
-    .replace('{somenteAbertas}', tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '');
+    .replace('{somenteAbertas}', (tudoAberto ? " AND NOT EXISTS (SELECT 1 FROM E440NFC n2 WHERE n2.CHVNEL = x.CHVNEL AND n2.SITNFC <> '3')" : '') + SEM_EMPRESAS_FORA);
+  if (opcoesInternas.snapshotDashboard) {
+    // A fotografia atual também precisa contar XMLs sem datas válidas. O período
+    // pertence aos relatórios históricos; não limita o estoque aberto do VIA.
+    sql = sql.slice(0, sql.indexOf('  WHERE (((x.DATEMI'))
+      + "  WHERE NOT EXISTS (SELECT 1 FROM E440NFC nd WHERE nd.CHVNEL = x.CHVNEL AND nd.SITNFC <> '3')" + SEM_EMPRESAS_FORA;
+  }
   // A chave usa o filtro pedido, não as datas calculadas: "últimos 60 dias" vira um Date diferente
   // a cada chamada e o cache nunca seria aproveitado.
   // A série do gráfico "chegada × lançamento" é outra consulta: começa junto, sem esperar a principal
@@ -322,8 +279,9 @@ export async function painelPendentes(filtros = {}) {
     if (texto > fimSerie) break;
     diasSerie.push(texto);
   }
-  const serieAsync = comCache(`pendentes-serie|${versaoSql(SQL_SERIE)}|${inicioSerie}|${fimSerie}`, filtros.forcar === '1' ? 0 : 300_000,
-    () => consultar(SQL_SERIE, new Date(`${inicioSerie}T00:00:00Z`), { ate: new Date(`${fimSerie}T23:59:59Z`) }));
+  const serieAsync = opcoesInternas.snapshotDashboard ? Promise.resolve([])
+    : comCache(`pendentes-serie|${versaoSql(SQL_SERIE)}|${inicioSerie}|${fimSerie}`, filtros.forcar === '1' ? 0 : 300_000,
+      () => consultar(SQL_SERIE, new Date(`${inicioSerie}T00:00:00Z`), { ate: new Date(`${fimSerie}T23:59:59Z`) }));
   serieAsync.catch(() => {}); // o erro é tratado lá embaixo
   const linhas = await comCache(
     `pendentes|${versaoSql(sql)}|${JSON.stringify(regraBiomassa())}|${mes ?? ''}|${filtros.de ?? ''}|${filtros.ate ?? ''}|${filtros.dias ?? ''}|${tudoAberto}`,
@@ -344,6 +302,10 @@ export async function painelPendentes(filtros = {}) {
     return m ? { ...i, motivo: m.motivo, motivo_rotulo: MOTIVOS[m.motivo] ?? m.motivo, motivo_obs: m.observacao, motivo_por: m.usuario, motivo_em: m.atualizado_em } : i;
   };
   let itens = linhas.map((l) => comMotivo({ ...montarItemClassificado(l, canceladas, dia), origem: 'senior' }));
+
+  // Consulta interna do Dashboard: fotografia atual do VIA, antes dos filtros e limites
+  // da tela e sem misturar notas de serviço vindas de planilhas da contabilidade.
+  if (opcoesInternas.snapshotDashboard) return { itens, consultado_em: new Date().toISOString() };
 
   // NFS-e da planilha da contabilidade: entram na mesma fila, porque nota de serviço municipal
   // não passa pelo recebimento de XML do Senior e não apareceria em lugar nenhum.

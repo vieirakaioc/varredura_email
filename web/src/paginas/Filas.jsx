@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
-import { BotaoExportar, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
+import { useAuth } from '../contexto.jsx';
+import { BotaoExportar, COR_CATEGORIA, Cartao, Carregando, data, Erro, Kpi, numero, useDados, useToast } from '../ui.jsx';
+import Carteira from './Carteira.jsx';
 
-const hoje = () => new Date().toLocaleDateString('sv-SE');
+const hoje = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+const dataConsulta = (v) => {
+  if (!v) return '—';
+  const instante = new Date(v);
+  return Number.isNaN(instante.getTime()) ? '—' : instante.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
+};
 const COR = { titular: 'var(--serie-1)', apoio: 'var(--status-atencao)' };
+const BLOCO = { fiscal: 'Escrita Fiscal', supervisao: 'Supervisão', outros: 'Outros' };
 
 /**
  * Operação por fila de tipo de nota (piloto de 16 a 30/10/2026).
@@ -12,6 +20,21 @@ const COR = { titular: 'var(--serie-1)', apoio: 'var(--status-atencao)' };
  * e o compromisso de produção do dia. Nada vira status ou apontamento por nota no ERP.
  */
 export default function Filas() {
+  const { usuario } = useAuth();
+  const [visao, setVisao] = useState('carteira');
+  if (usuario.perfil === 'membro') return <Navigate to="/carteira" replace />;
+  return <>
+    <div className="linha" style={{ gap: 8, marginBottom: 12 }}>
+      <button className={`btn pequeno ${visao === 'carteira' ? '' : 'ghost'}`} onClick={() => setVisao('carteira')}>Carteira de notas</button>
+      <button className={`btn pequeno ${visao === 'compromissos' ? '' : 'ghost'}`} onClick={() => setVisao('compromissos')}>Dashboard</button>
+    </div>
+    {visao === 'carteira' ? <Carteira /> : <Compromissos />}
+  </>;
+}
+
+function Compromissos() {
+  const { pode } = useAuth();
+  const editar = pode('decidir');
   const [params, setParams] = useSearchParams();
   const dia = params.get('dia') || hoje();
   const avisar = useToast();
@@ -19,13 +42,14 @@ export default function Filas() {
   const [verDetalhe, setVerDetalhe] = useState(false);
 
   const filas = useDados(() => api.get('/filas'), [], { automatico: false });
-  const painel = useDados(({ forcar } = {}) => api.get(`/filas/dia${qs({ dia, forcar: forcar ? '1' : '' })}`), [dia], { automatico: false });
+  const painel = useDados(({ forcar } = {}) => api.get(`/filas/dia${qs({ dia, forcar: forcar ? '1' : '' })}`), [dia], { automatico: false, memoria: 'filas-dia' });
   const [linhas, setLinhas] = useState(null);     // compromisso em edição
   const [sugestao, setSugestao] = useState(null);
 
   useEffect(() => { setLinhas(null); setSugestao(null); }, [dia]);
 
   const sugerir = async () => {
+    if (!editar) return;
     try {
       const s = await api.get(`/filas/sugestao${qs({ dia })}`);
       setSugestao(s);
@@ -34,6 +58,7 @@ export default function Filas() {
     } catch (e) { avisar(e.message, 'erro'); }
   };
   const gravar = async () => {
+    if (!editar) return;
     try {
       const r = await api.put('/filas/dia', { dia, itens: linhas ?? [] });
       avisar(`Compromisso de ${data(dia)} gravado (${numero(r.gravados)} linha(s))`, 'ok');
@@ -43,6 +68,7 @@ export default function Filas() {
 
   const d = painel.dados;
   const k = d?.indicadores;
+  const producaoOk = d?.dashboard?.notas_lancadas?.estado === 'ok';
   const doTime = (d?.linhas ?? []).filter((l) => l.equipe === 'fiscal');
   const foraDaFila = doTime.filter((l) => l.compromisso == null && l.realizado > 0);
 
@@ -68,34 +94,35 @@ export default function Filas() {
         <div className="linha" style={{ gap: 10, flexWrap: 'wrap' }}>
           <label className="linha" style={{ gap: 6 }}>
             <strong className="muted pequeno">Dia</strong>
-            <input type="date" value={dia} onChange={(e) => setParams({ dia: e.target.value || hoje() })} />
+            <input type="date" value={dia} onChange={(e) => { const p = new URLSearchParams(params); p.set('dia', e.target.value || hoje()); setParams(p); }} />
           </label>
-          <button className="btn pequeno" onClick={sugerir}>Sugerir compromisso</button>
-          {linhas && <button className="btn pequeno" onClick={gravar}>Gravar compromisso</button>}
+          {editar && <button className="btn pequeno" onClick={sugerir}>Sugerir compromisso</button>}
+          {editar && linhas && <button className="btn pequeno" onClick={gravar}>Gravar compromisso</button>}
           {linhas && <button className="btn pequeno ghost" onClick={() => { setLinhas(null); setSugestao(null); }}>Cancelar</button>}
           <button className="btn pequeno ghost" onClick={() => painel.recarregar()}>Atualizar</button>
           <span className="espaco" />
           <button className="btn pequeno ghost" onClick={() => setVerDetalhe((x) => !x)}>
             {verDetalhe ? 'Esconder o detalhe' : 'Ver detalhe e exportar'}
           </button>
-          <button className="btn pequeno ghost" onClick={() => setEditando((x) => !x)}>
+          {editar && <button className="btn pequeno ghost" onClick={() => setEditando((x) => !x)}>
             {editando ? 'Fechar a configuração' : 'Configurar filas'}
-          </button>
+          </button>}
         </div>
         {d && (
           <div className="muted pequeno" style={{ marginTop: 8 }}>
-            Fonte: {d.fonte}. Atualizado em {data(d.atualizado_em, true)}.
+            Produção de {data(dia)} · pendências na consulta atual. Atualizado em {dataConsulta(d.atualizado_em)} (horário de Brasília).
             {!d.dia_util && ' Atenção: este dia não é dia útil.'}
           </div>
         )}
       </Cartao>
 
       <Erro erro={filas.erro ?? painel.erro} />
-      {editando && <ConfiguracaoFilas filas={filas} avisar={avisar} />}
+      {editar && editando && <ConfiguracaoFilas filas={filas} avisar={avisar} />}
 
       {painel.carregando && !d ? <Carregando /> : d && (
         <>
-          <Placar k={k} falta={falta} dia={dia} fora={foraDaFila.reduce((s, l) => s + l.realizado, 0)} />
+          <IndicadoresDashboard painel={d} dia={dia} />
+          <Placar k={k} falta={falta} fora={foraDaFila.reduce((s, l) => s + l.realizado, 0)} disponivel={producaoOk} />
 
           {sugestao && (
             <Cartao titulo="Sugestão do dia" sub="distribui as pendências em aberto pela capacidade de cada pessoa">
@@ -106,15 +133,18 @@ export default function Filas() {
             </Cartao>
           )}
 
-          {!linhas && Boolean(quadro.length) && (
-            <div className="grade" style={{ gridTemplateColumns: `repeat(${Math.min(quadro.length, 4)}, minmax(0, 1fr))`, alignItems: 'start' }}>
+          {!linhas && producaoOk && Boolean(quadro.length) && (
+            <div className="grade" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', alignItems: 'start' }}>
               {quadro.map((c) => <ColunaFila key={c.chave} fila={c} />)}
             </div>
           )}
 
-          {!linhas && !quadro.length && (
+          {!linhas && (!quadro.length || !producaoOk) && (
             <Cartao><p className="muted" style={{ margin: 0 }}>
-              Nada combinado nem lançado em {data(dia)}. Use <strong>Sugerir compromisso</strong> para montar o quadro do dia.
+              {producaoOk
+                ? <>Nada combinado nem lançado pelo time em {data(dia)}.</>
+                : 'A produção está indisponível no momento.'}
+              {editar && <> Use <strong>Sugerir compromisso</strong> para montar o quadro do dia.</>}
             </p></Cartao>
           )}
 
@@ -126,8 +156,8 @@ export default function Filas() {
                 { titulo: 'Bloco', valor: (l) => ({ fiscal: 'Escrita Fiscal', supervisao: 'Supervisão', outros: 'Outros' }[l.equipe] ?? l.equipe) },
                 { titulo: 'Tipo de nota', valor: (l) => l.categoria_rotulo },
                 { titulo: 'Compromisso', tipo: 'numero', valor: (l) => l.compromisso },
-                { titulo: 'Realizado', tipo: 'numero', valor: (l) => l.realizado },
-                { titulo: 'Diferença', tipo: 'numero', valor: (l) => l.diferenca },
+                { titulo: 'Realizado', tipo: 'numero', valor: (l) => producaoOk ? l.realizado : null },
+                { titulo: 'Diferença', tipo: 'numero', valor: (l) => producaoOk ? l.diferenca : null },
                 { titulo: 'Observação', valor: (l) => l.observacao },
               ]} />}>
             <div className="tabela-wrap">
@@ -156,9 +186,9 @@ export default function Filas() {
                       ) : (
                         <>
                           <td className="num">{l.compromisso != null ? <strong>{numero(l.compromisso)}</strong> : <span className="muted">A definir</span>}</td>
-                          <td className="num">{numero(l.realizado)}</td>
+                          <td className="num">{producaoOk ? numero(l.realizado) : '—'}</td>
                           <td className="num" style={{ color: l.diferenca == null ? undefined : l.diferenca >= 0 ? 'var(--status-bom)' : 'var(--status-critico)' }}>
-                            {l.diferenca == null ? <span className="muted">—</span> : `${l.diferenca > 0 ? '+' : ''}${numero(l.diferenca)}`}
+                            {!producaoOk || l.diferenca == null ? <span className="muted">—</span> : `${l.diferenca > 0 ? '+' : ''}${numero(l.diferenca)}`}
                           </td>
                           <td className="muted pequeno">{l.observacao ?? ''}</td>
                         </>
@@ -203,31 +233,132 @@ export default function Filas() {
   );
 }
 
-/** Faixa de números grandes do quadro: é o que se lê de longe na reunião de 10 minutos. */
-function Placar({ k, falta, dia, fora }) {
-  const cor = k.cumprimento == null ? 'var(--texto-3)'
-    : k.cumprimento >= 100 ? 'var(--status-bom)' : k.cumprimento >= 80 ? 'var(--status-atencao)' : 'var(--status-critico)';
-  const bloco = (rotulo, valor, detalhe, corValor) => (
-    <div style={{ flex: '1 1 150px', minWidth: 140 }}>
-      <div className="muted" style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: '.04em' }}>{rotulo}</div>
-      <div style={{ fontSize: 46, fontWeight: 700, lineHeight: 1.1, color: corValor }}>{valor}</div>
-      {detalhe && <div className="muted pequeno">{detalhe}</div>}
-    </div>
-  );
+/** Os dados do dia e a fotografia atual da fila têm períodos diferentes, identificados em cada bloco. */
+function IndicadoresDashboard({ painel, dia }) {
+  const [todasPessoas, setTodasPessoas] = useState(false);
+  const d = painel.dashboard ?? {};
+  const producao = d.notas_lancadas ?? {};
+  const pendencias = d.pendencias ?? {};
+  const antigos = d.antigos ?? {};
+  const producaoOk = producao.estado === 'ok';
+  const pendenciasOk = pendencias.estado === 'ok';
+  const antigosOk = antigos.estado === 'ok';
+  const k = painel.indicadores;
+  const cumprimento = producaoOk ? k.cumprimento : null;
+  const maisAntiga = (antigos.itens ?? []).filter((i) => i.recebido_em).slice()
+    .sort((a, b) => String(a.recebido_em).localeCompare(String(b.recebido_em)))[0];
+  const pessoas = (painel.linhas ?? []).slice().sort((a, b) => b.realizado - a.realizado
+    || a.usuario.localeCompare(b.usuario, 'pt-BR') || a.categoria_rotulo.localeCompare(b.categoria_rotulo, 'pt-BR'));
+  const colunasPessoas = [
+    { titulo: 'Pessoa', valor: (i) => i.usuario },
+    { titulo: 'Bloco', valor: (i) => BLOCO[i.equipe] ?? i.equipe },
+    { titulo: 'Tipo de nota', valor: (i) => i.categoria_rotulo },
+    { titulo: 'Notas lançadas', tipo: 'numero', valor: (i) => i.realizado },
+    { titulo: 'Compromisso', tipo: 'numero', valor: (i) => i.compromisso },
+    { titulo: 'Diferença', tipo: 'numero', valor: (i) => i.diferenca },
+    { titulo: 'Cumprimento (%)', tipo: 'numero', valor: (i) => i.compromisso > 0 ? Math.round(i.realizado / i.compromisso * 100) : null },
+  ];
+  const colunasAntigos = [
+    { titulo: 'Nota', valor: (i) => i.numero },
+    { titulo: 'Fornecedor', valor: (i) => i.fornecedor },
+    { titulo: 'Empresa / filial', valor: (i) => i.empresa },
+    { titulo: 'Tipo de nota', valor: (i) => i.categoria_rotulo },
+    { titulo: 'Recebimento no VIA', tipo: 'data', valor: (i) => i.recebido_em },
+    { titulo: 'Dias de espera', tipo: 'numero', valor: (i) => i.dias },
+  ];
+  useEffect(() => { setTodasPessoas(false); }, [dia]);
+
   return (
-    <Cartao>
-      <div className="linha" style={{ gap: 26, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        {bloco('Combinado', k.compromisso != null ? numero(k.compromisso) : 'A definir',
-          k.compromisso != null ? `${numero(k.pessoas_com_compromisso)} pessoa(s)` : 'use “Sugerir compromisso”')}
-        {bloco('Feito', numero(k.realizado_time), `${numero(k.realizado_total)} com integração`, 'var(--serie-1)')}
-        {bloco('Falta', falta != null ? numero(falta) : '—', falta === 0 ? 'dia fechado' : 'para fechar o combinado',
-          falta ? 'var(--status-atencao)' : 'var(--status-bom)')}
-        {bloco('Cumprimento', k.cumprimento != null ? `${numero(k.cumprimento)}%` : 'Não se aplica', 'na fila combinada', cor)}
-        {bloco('Fora da fila', numero(fora), fora ? 'trabalho de outro tipo' : 'nada fora do combinado',
-          fora ? 'var(--status-atencao)' : undefined)}
+    <>
+      {(d.avisos ?? []).map((aviso, i) => <div key={i} className="aviso pequeno" role="status" style={{ marginBottom: 12 }}>{aviso}</div>)}
+      <div className="grade grade-kpi">
+        <Kpi rotulo="Notas lançadas" valor={producaoOk ? numero(producao.total) : 'Indisponível'}
+          detalhe={producaoOk ? `${data(dia)} · ${numero(producao.time)} pelo time fiscal · ${numero(producao.supervisao)} supervisão · ${numero(producao.outros)} outros` : 'Não foi possível consultar a produção no Senior'}
+          titulo={producao.fonte} cor="var(--serie-1)" />
+        <Kpi rotulo="Pendências atuais" valor={pendenciasOk ? numero(pendencias.total) : 'Indisponível'}
+          detalhe={pendenciasOk ? `VIA · consulta em ${dataConsulta(pendencias.consultado_em)}` : 'Não foi possível consultar a fila atual'}
+          titulo={pendencias.fonte} cor="var(--status-atencao)" />
+        <Kpi rotulo="Cumprimento do dia" valor={!producaoOk ? 'Indisponível' : cumprimento == null ? 'A definir' : `${numero(cumprimento)}%`}
+          detalhe={k.compromisso != null ? `${numero(k.compromisso)} notas combinadas · por pessoa e tipo` : 'Sem compromisso registrado para o dia'}
+          cor={cumprimento == null ? undefined : cumprimento >= 100 ? 'var(--status-bom)' : 'var(--status-atencao)'} />
+        <Kpi rotulo="Documento mais antigo" valor={!antigosOk ? 'Indisponível' : maisAntiga ? `${numero(maisAntiga.dias)} dia(s)` : '—'}
+          detalhe={maisAntiga ? `Recebido no VIA em ${data(maisAntiga.recebido_em)}` : antigosOk ? 'Sem pendência com data de recebimento válida' : 'Data de recebimento indisponível'}
+          cor={maisAntiga?.dias > 5 ? 'var(--status-critico)' : undefined} />
       </div>
-    </Cartao>
+      <div className="grade" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', alignItems: 'start' }}>
+        <Cartao titulo="Composição da produção" sub={`notas lançadas por tipo em ${data(dia)} · total no Senior`}
+          acoes={producaoOk && <BotaoExportar titulo={`Composição da produção ${dia}`} linhas={d.composicao ?? []} rotulo="Excel"
+            colunas={[{ titulo: 'Tipo de nota', valor: (i) => i.rotulo }, { titulo: 'Notas lançadas', tipo: 'numero', valor: (i) => i.notas }, { titulo: 'Participação (%)', tipo: 'numero', valor: (i) => i.percentual }]} />}>
+          <BarrasPorTipo itens={d.composicao ?? []} campo="notas" disponivel={producaoOk} vazio="Nenhuma nota lançada neste dia." percentual />
+        </Cartao>
+        <Cartao titulo="Pendências por tipo" sub="fila atual no VIA · entradas da Escrita Fiscal no grupo"
+          acoes={pendenciasOk && <BotaoExportar titulo="Pendências atuais por tipo" linhas={pendencias.por_tipo ?? []} rotulo="Excel"
+            colunas={[{ titulo: 'Tipo de nota', valor: (i) => i.rotulo }, { titulo: 'Pendências atuais', tipo: 'numero', valor: (i) => i.qtd }]} />}>
+          <BarrasPorTipo itens={pendencias.por_tipo ?? []} campo="qtd" disponivel={pendenciasOk} vazio="Nenhuma pendência na consulta atual." />
+          <p className="muted pequeno" style={{ marginBottom: 0 }}>Não inclui notas canceladas, já lançadas ou serviços recebidos apenas nas planilhas da contabilidade.</p>
+        </Cartao>
+      </div>
+      <Cartao titulo="Produção por pessoa e tipo" sub={`${data(dia)} · documentos distintos pela data do lançamento no Senior`}
+        semPadding acoes={<div className="linha" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {pessoas.length > 10 && <button className="btn pequeno ghost" onClick={() => setTodasPessoas((x) => !x)}>{todasPessoas ? 'Resumir' : `Ver todas (${numero(pessoas.length)})`}</button>}
+          {producaoOk && <BotaoExportar titulo={`Produção por pessoa e tipo ${dia}`} linhas={pessoas} colunas={colunasPessoas} rotulo="Excel" />}
+        </div>}>
+        <div className="tabela-wrap"><table className="tabela">
+          <thead><tr><th>Pessoa</th><th>Bloco</th><th>Tipo de nota</th><th className="num">Lançadas</th><th className="num">Compromisso</th><th className="num">Diferença</th><th className="num">Cumprimento</th></tr></thead>
+          <tbody>
+            {producaoOk && (todasPessoas ? pessoas : pessoas.slice(0, 10)).map((i) => <tr key={`${i.usuario}|${i.categoria}`}>
+              <td>{i.usuario}</td><td className="pequeno muted">{BLOCO[i.equipe] ?? i.equipe}</td><td>{i.categoria_rotulo}</td>
+              <td className="num"><strong>{numero(i.realizado)}</strong></td><td className="num">{i.compromisso == null ? 'A definir' : numero(i.compromisso)}</td>
+              <td className="num" style={{ color: i.diferenca == null ? undefined : i.diferenca >= 0 ? 'var(--status-bom)' : 'var(--status-critico)' }}>{i.diferenca == null ? '—' : `${i.diferenca > 0 ? '+' : ''}${numero(i.diferenca)}`}</td>
+              <td className="num">{i.compromisso > 0 ? `${numero(i.realizado / i.compromisso * 100)}%` : '—'}</td>
+            </tr>)}
+            {(!producaoOk || !pessoas.length) && <tr><td colSpan={7} className="muted" style={{ padding: 16 }}>{producaoOk ? 'Nenhum lançamento ou compromisso neste dia.' : 'Produção indisponível no momento. Atualize para consultar novamente.'}</td></tr>}
+          </tbody>
+        </table></div>
+        {producaoOk && pessoas.length > 10 && !todasPessoas && <div className="muted pequeno" style={{ padding: '8px 12px' }}>Mostrando as 10 maiores produções. A exportação inclui todas as pessoas e tipos.</div>}
+      </Cartao>
+      <Cartao titulo="Documentos mais antigos" sub="10 pendências com maior espera · data de recebimento no VIA"
+        semPadding acoes={antigosOk && <BotaoExportar titulo="Documentos mais antigos" linhas={antigos.itens ?? []} colunas={colunasAntigos} rotulo="Excel" />}>
+        <div className="tabela-wrap"><table className="tabela">
+          <thead><tr><th>Nota</th><th>Fornecedor</th><th>Empresa / filial</th><th>Tipo de nota</th><th>Recebimento no VIA</th><th className="num">Dias de espera</th></tr></thead>
+          <tbody>
+            {antigosOk && (antigos.itens ?? []).slice(0, 10).map((i, n) => <tr key={i.chave ?? `${i.numero}|${n}`}>
+              <td>{i.numero ?? '—'}</td><td>{i.fornecedor ?? '—'}</td><td>{i.empresa ?? '—'}</td><td>{i.categoria_rotulo ?? '—'}</td><td>{data(i.recebido_em)}</td><td className="num">{numero(i.dias)}</td>
+            </tr>)}
+            {(!antigosOk || !antigos.itens?.length) && <tr><td colSpan={6} className="muted" style={{ padding: 16 }}>{antigosOk ? 'Nenhuma pendência com data de recebimento válida.' : 'Não foi possível consultar as datas de recebimento.'}</td></tr>}
+          </tbody>
+        </table></div>
+        <div className="muted pequeno" style={{ padding: '8px 12px' }}>
+          {antigosOk && <>{numero(antigos.total_com_data)} pendência(s) com data válida · {numero(antigos.sem_data)} sem data de recebimento válida. </>}
+          A espera é contada desde o recebimento no VIA, sem substituir pela data de emissão.
+        </div>
+      </Cartao>
+    </>
   );
+}
+
+function BarrasPorTipo({ itens, campo, disponivel, vazio, percentual = false }) {
+  if (!disponivel) return <p className="muted" style={{ margin: 0 }}>Dados indisponíveis no momento.</p>;
+  const linhas = itens.filter((i) => i[campo] > 0).slice().sort((a, b) => b[campo] - a[campo]);
+  if (!linhas.length) return <p className="muted" style={{ margin: 0 }}>{vazio}</p>;
+  const maior = Math.max(...linhas.map((i) => i[campo]));
+  return <div>{linhas.map((i) => <div key={i.chave} style={{ marginBottom: 14 }}>
+    <div className="linha entre pequeno" style={{ gap: 12, marginBottom: 5 }}>
+      <span>{i.rotulo}</span><strong style={{ whiteSpace: 'nowrap' }}>{numero(i[campo])}{percentual && i.percentual != null ? ` · ${numero(i.percentual, 1)}%` : ''}</strong>
+    </div>
+    <div className="barra-progresso" style={{ height: 10 }}><div style={{ width: `${i[campo] / maior * 100}%`, background: COR_CATEGORIA[i.chave] ?? 'var(--serie-1)' }} /></div>
+  </div>)}</div>;
+}
+
+function Placar({ k, falta, fora, disponivel }) {
+  return <Cartao titulo="Compromissos do dia" sub="acompanhamento da Escrita Fiscal por pessoa e tipo">
+    <div className="linha pequeno" style={{ gap: 22, flexWrap: 'wrap' }}>
+      <span>Combinado: <strong>{k.compromisso == null ? 'A definir' : numero(k.compromisso)}</strong>{k.compromisso != null ? ` · ${numero(k.pessoas_com_compromisso)} pessoa(s)` : ''}</span>
+      <span>Realizado pelo time: <strong>{disponivel ? numero(k.realizado_time) : 'Indisponível'}</strong></span>
+      <span>Falta para o combinado: <strong>{disponivel ? numero(falta) : '—'}</strong></span>
+      <span>Fora da fila combinada: <strong>{disponivel ? numero(fora) : '—'}</strong></span>
+    </div>
+  </Cartao>;
 }
 
 /** Uma coluna por fila: o tipo, o total e uma barra por pessoa. */

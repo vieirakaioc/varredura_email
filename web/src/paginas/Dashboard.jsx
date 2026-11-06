@@ -96,21 +96,21 @@ export default function Dashboard() {
               <Kpi rotulo="Rejeitadas" valor={numero(d.indicadores.rejeitadas)} cor="var(--rej)" onClick={() => ir({ status: 'REJEITADA' })} />
               <Kpi rotulo="Duplicadas" valor={numero(d.indicadores.duplicadas)} detalhe={`${numero(d.indicadores.recebimentos_duplicados)} recebimento(s) repetido(s)`} cor="var(--dup)" onClick={() => ir({ duplicadas: '1' })} />
               <Kpi rotulo="Sem XML" valor={numero(d.indicadores.sem_xml)} cor="var(--xml)" onClick={() => ir({ sem_xml: '1' })} />
-              <Kpi rotulo="Aguardando ação" valor={numero(d.indicadores.aguardando_acao)} detalhe={`${numero(d.indicadores.atrasadas)} com prazo vencido`} cor="var(--pend)" onClick={() => navegar('/fila?visao=todas')} />
+              <Kpi rotulo="Aguardando ação" valor={numero(d.indicadores.aguardando_acao)} detalhe={`${numero(d.indicadores.atrasadas)} com prazo vencido`} cor="var(--pend)" />
               {(d.indicadores.nao_lancadas_senior > 0 || d.indicadores.lancadas_senior > 0) && (
-                <Kpi rotulo="Não lançadas no Senior" valor={numero(d.indicadores.nao_lancadas_senior)} detalhe={`${numero(d.indicadores.lancadas_senior)} já lançadas`} cor="var(--pend)" onClick={() => navegar('/fila?visao=a_lancar')} />
+                <Kpi rotulo="Não lançadas no Senior" valor={numero(d.indicadores.nao_lancadas_senior)} detalhe={`${numero(d.indicadores.lancadas_senior)} já lançadas`} cor="var(--pend)" onClick={() => ir({ senior: 'nao_lancada' })} />
               )}
               <Kpi rotulo="Correção solicitada" valor={numero(d.indicadores.correcao_solicitada)} cor="var(--corr)" onClick={() => ir({ status: 'CORRECAO_SOLICITADA' })} />
             </div>
 
             {fin.dados && (
-              <Cartao titulo="Financeiro · contas a pagar" sub="duplicatas das NFs recebidas" acoes={<button className="btn pequeno" onClick={() => navegar('/financeiro')}>Abrir painel financeiro</button>}>
+              <Cartao titulo="Financeiro · contas a pagar" sub="duplicatas das NFs · situação de cada título em Todas as notas">
                 <div className="grade grade-kpi monetario">
-                  <Kpi rotulo="Vencidas em aberto" valor={brl(fin.dados.indicadores.vencidas_valor)} detalhe={`${numero(fin.dados.indicadores.vencidas_qtd)} título(s)`} cor="var(--erro)" onClick={() => navegar('/financeiro?situacao=vencidas')} />
-                  <Kpi rotulo="Vencem hoje" valor={brl(fin.dados.indicadores.hoje_valor)} detalhe={`${numero(fin.dados.indicadores.hoje_qtd)} título(s)`} cor="var(--erro)" onClick={() => navegar('/financeiro?situacao=hoje')} />
-                  <Kpi rotulo="Próximos 7 dias" valor={brl(fin.dados.indicadores.prox7_valor)} detalhe={`${numero(fin.dados.indicadores.prox7_qtd)} título(s)`} cor="var(--pend)" onClick={() => navegar('/financeiro?situacao=7d')} />
-                  <Kpi rotulo="Vencendo sem aprovação fiscal" valor={brl(fin.dados.indicadores.risco_valor)} detalhe={`${numero(fin.dados.indicadores.risco_qtd)} título(s) em até 7 dias`} cor="var(--erro)" onClick={() => navegar('/financeiro?situacao=risco')} titulo="Títulos vencidos ou vencendo em 7 dias cuja NF ainda não foi aprovada" />
-                  <Kpi rotulo="Total em aberto" valor={brl(fin.dados.indicadores.aberto_valor)} detalhe={`${numero(fin.dados.indicadores.aberto_qtd)} título(s)`} onClick={() => navegar('/financeiro')} />
+                  <Kpi rotulo="Vencidas em aberto" valor={brl(fin.dados.indicadores.vencidas_valor)} detalhe={`${numero(fin.dados.indicadores.vencidas_qtd)} título(s)`} cor="var(--erro)" onClick={() => ir({ pagamento: 'vencido' })} />
+                  <Kpi rotulo="Vencem hoje" valor={brl(fin.dados.indicadores.hoje_valor)} detalhe={`${numero(fin.dados.indicadores.hoje_qtd)} título(s)`} cor="var(--erro)" />
+                  <Kpi rotulo="Próximos 7 dias" valor={brl(fin.dados.indicadores.prox7_valor)} detalhe={`${numero(fin.dados.indicadores.prox7_qtd)} título(s)`} cor="var(--pend)" />
+                  <Kpi rotulo="Vencendo sem aprovação fiscal" valor={brl(fin.dados.indicadores.risco_valor)} detalhe={`${numero(fin.dados.indicadores.risco_qtd)} título(s) em até 7 dias`} cor="var(--erro)" titulo="Títulos vencidos ou vencendo em 7 dias cuja NF ainda não foi aprovada" />
+                  <Kpi rotulo="Total em aberto" valor={brl(fin.dados.indicadores.aberto_valor)} detalhe={`${numero(fin.dados.indicadores.aberto_qtd)} título(s)`} onClick={() => ir({ pagamento: 'aberto' })} />
                 </div>
               </Cartao>
             )}

@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { interpretar, CANCELAMENTOS } from '../src/fiscal/sefaz/dfe.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { after } from 'node:test';
+
+// O parser também importa o banco via distribuição DF-e: mantenha os testes isolados.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sefaz-test-'));
+process.env.DATA_DIR = tmp;
+process.env.APP_SECRET = 'teste-sefaz';
+const { interpretar, CANCELAMENTOS } = await import('../src/fiscal/sefaz/dfe.js');
+const { db } = await import('../src/db/index.js');
+after(() => { db.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
 
 const CHAVE = '52260935258684000100550010000080521351089530';
 

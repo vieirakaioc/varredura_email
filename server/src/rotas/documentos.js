@@ -289,14 +289,3 @@ rotasDocumentos.get('/anexos/:id/arquivo', (req, res) => {
   res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(a.nome_arquivo)}"`);
   res.sendFile(path.join(paths.anexos, a.caminho));
 });
-
-rotasDocumentos.post('/importar', permitir('decidir'), upload.array('arquivos'), async (req, res) => {
-  const resultados = [];
-  for (const f of req.files || []) {
-    const nome = Buffer.from(f.originalname, 'latin1').toString('utf8');
-    const r = await processarArquivo({ buffer: f.buffer, nome, mime: f.mimetype, origem: 'upload' });
-    resultados.push(...r.map((x) => ({ arquivo: nome, ...x })));
-  }
-  auditar(req.usuario.id, 'documento.importar', 'anexo', null, { arquivos: (req.files || []).map((f) => f.originalname) }, req.ip);
-  res.json({ resultados });
-});

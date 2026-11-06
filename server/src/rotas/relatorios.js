@@ -212,7 +212,7 @@ rotasRelatorios.get('/relatorios/:id', permitir('relatorios'), async (req, res) 
  * Exporta para Excel o que está na tela (tabela já filtrada no navegador).
  * Corpo: { titulo, colunas: [{ titulo, tipo? }], linhas: [[valor, ...]] } — tipo: texto | moeda | numero | data
  */
-rotasRelatorios.post('/exportar', permitir('ver'), async (req, res) => {
+rotasRelatorios.post('/exportar', permitir('exportar'), async (req, res) => {
   const { titulo = 'Exportação', colunas = [], linhas = [] } = req.body ?? {};
   if (!Array.isArray(colunas) || !colunas.length || !Array.isArray(linhas)) return res.status(400).json({ erro: 'Nada para exportar' });
   if (linhas.length > 50000) return res.status(400).json({ erro: 'Limite de 50.000 linhas por exportação' });
